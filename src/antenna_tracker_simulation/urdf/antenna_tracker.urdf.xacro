@@ -149,19 +149,33 @@
     <origin xyz="0.05 0 0.03" rpy="0 0 0"/>
   </joint>
 
-  <!-- Gazebo Plugins -->
+  <!-- Gazebo Plugins (Fortress) -->
   <gazebo>
-    <plugin filename="libgazebo_ros_joint_state_publisher.so" name="joint_state_publisher">
+    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
       <joint_name>azimuth_joint</joint_name>
       <joint_name>elevation_joint</joint_name>
-      <update_rate>100</update_rate>
     </plugin>
+
+    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+      <joint_name>azimuth_joint</joint_name>
+      <topic>/model/antenna_tracker/joint/azimuth_joint/cmd_vel</topic>
+    </plugin>
+
+    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+      <joint_name>elevation_joint</joint_name>
+      <topic>/model/antenna_tracker/joint/elevation_joint/cmd_vel</topic>
+    </plugin>
+
+    <!-- Sensor systems -->
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat"/>
   </gazebo>
 
   <gazebo reference="imu_link">
     <sensor name="imu_sensor" type="imu">
       <always_on>true</always_on>
       <update_rate>100</update_rate>
+      <topic>/imu/raw</topic>
       <imu>
         <angular_velocity>
           <x><noise type="gaussian"><mean>0</mean><stddev>0.001</stddev></noise></x>
@@ -174,25 +188,15 @@
           <z><noise type="gaussian"><mean>0</mean><stddev>0.01</stddev></noise></z>
         </linear_acceleration>
       </imu>
-      <plugin filename="libgazebo_ros_imu_sensor.so" name="imu_plugin">
-        <ros>
-          <remapping>~/out:=/imu/raw</remapping>
-        </ros>
-        <frame_name>imu_link</frame_name>
-      </plugin>
+      <!-- Fortress relies on the gz-sim-imu-system above processing this block -->
     </sensor>
   </gazebo>
 
   <gazebo reference="base_link">
-    <sensor name="gps_sensor" type="gps">
+    <sensor name="gps_sensor" type="navsat">
       <always_on>true</always_on>
       <update_rate>1</update_rate>
-      <plugin filename="libgazebo_ros_gps_sensor.so" name="gps_plugin">
-        <ros>
-          <remapping>~/out:=/gps/fix</remapping>
-        </ros>
-        <frame_name>base_link</frame_name>
-      </plugin>
+      <topic>/gps/fix</topic>
     </sensor>
   </gazebo>
 

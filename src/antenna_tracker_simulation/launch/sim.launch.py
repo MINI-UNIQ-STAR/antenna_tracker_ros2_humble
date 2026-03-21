@@ -1,39 +1,65 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, Command
 from launch_ros.actions import Node
 
-
 def generate_launch_description():
     pkg_sim = get_package_share_directory('antenna_tracker_simulation')
-    pkg_controller = get_package_share_directory('antenna_tracker_controller')
+    gz_sim_pkg = get_package_share_directory('ros_gz_sim')
 
     xacro_file = os.path.join(pkg_sim, 'urdf', 'antenna_tracker.urdf.xacro')
     world_file = os.path.join(pkg_sim, 'worlds', 'antenna_tracker.world')
     rviz_config = os.path.join(pkg_sim, 'config', 'rviz_config.rviz')
 
     robot_description = Command(['xacro ', xacro_file])
-
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
 
-        # Gazebo
-        ExecuteProcess(
-            cmd=['gazebo', '--verbose', world_file,
-                 '-s', 'libgazebo_ros_factory.so'],
+        # Gazebo Fortress Launch
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(gz_sim_pkg, 'launch', 'gz_sim.launch.py')
+            ),
+            launch_arguments={'gz_args': ['-r ', world_file]}.items(),
+        ),
+
+        # Spawn URDF in Gazebo
+        Node(
+            package='ros_gz_sim',
+            executable='create',
+            arguments=['-name', 'antenna_tracker',
+                       '-topic', 'robot_description',
+                       '-z', '0.1'],
             output='screen'
         ),
 
-        # Spawn robot
+        # ROS-GZ Bridge
         Node(
-            package='gazebo_ros',
-            executable='spawn_entity.py',
-            arguments=['-topic', 'robot_description', '-entity', 'antenna_tracker'],
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            arguments=[
+                '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
+                '/imu/raw@sensor_msgs/msg/Imu[gz.msgs.IMU',
+                '/gps/fix@sensor_msgs/msg/NavSatFix[gz.msgs.NavSat',
+                '/world/antenna_tracker_world/model/antenna_tracker/joint_state@sensor_msgs/msg/JointState[gz.msgs.Model',
+            ],
+            remappings=[
+                ('/world/antenna_tracker_world/model/antenna_tracker/joint_state', '/joint_states'),
+            ],
+            output='screen'
+        ),
+
+        # Motor velocity translator node
+        Node(
+            package='antenna_tracker_simulation',
+            executable='sim_motor_bridge_node',
+            name='sim_motor_bridge',
+            parameters=[{'use_sim_time': use_sim_time}],
             output='screen'
         ),
 
@@ -64,7 +90,7 @@ def generate_launch_description():
             output='screen'
         ),
 
-        # Controller Node
+        # Controller Node (NMPC)
         Node(
             package='antenna_tracker_controller',
             executable='controller_node',

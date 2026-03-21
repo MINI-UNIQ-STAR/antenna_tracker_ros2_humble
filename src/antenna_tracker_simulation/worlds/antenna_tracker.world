@@ -15,6 +15,15 @@
       <max_step_size>0.001</max_step_size>
     </physics>
 
+    <!-- Gazebo Fortress Base Plugins -->
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
     <scene>
       <ambient>0.4 0.4 0.4 1</ambient>
       <background>0.7 0.85 1.0 1</background>

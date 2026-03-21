@@ -9,6 +9,10 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>antenna_tracker_msgs</depend>
+
   <depend>robot_state_publisher</depend>
   <depend>joint_state_publisher</depend>
   <depend>xacro</depend>
