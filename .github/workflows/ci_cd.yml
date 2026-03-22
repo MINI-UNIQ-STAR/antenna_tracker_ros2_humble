@@ -41,6 +41,92 @@ jobs:
         run: |
           docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "cd /ros2_ws && source /opt/ros/humble/setup.bash && source install/setup.bash && colcon test && colcon test-result"
 
+      - name: Setup vcan interface
+        run: |
+          sudo modprobe vcan
+          sudo ip link add dev vcan0 type vcan
+          sudo ip link set up vcan0
+          ip link show vcan0
+
+      - name: Integration test — CAN bridge (vcan)
+        run: |
+          docker run --rm --privileged --network host \
+            -v ${{ github.workspace }}:/ros2_ws \
+            antenna_tracker_env bash -c "
+              set -e
+              source /opt/ros/humble/setup.bash
+              source /ros2_ws/install/setup.bash
+
+              # Start can_bridge_node on vcan0
+              ros2 run antenna_tracker_hardware can_bridge_node \
+                --ros-args -p can_interface:=vcan0 &
+              BRIDGE_PID=\$!
+              sleep 2
+
+              # Encoder frame 0x204: az=288.0° (2880=0x0B40), el=90.0° (900=0x0384), flags=0x03
+              cansend vcan0 204#0B40038403
+
+              # IMU accel frame 0x200: ax=1000, ay=0, az=0 (int16 BE × 1000)
+              cansend vcan0 200#03E8000000000000
+
+              # IMU gyro frame 0x201: gx=100, gy=0, gz=0 (int16 BE × 1000)
+              cansend vcan0 201#006400000000
+
+              # Mag frame 0x202: mx=1000, my=0, mz=0 (int16 BE × 100)
+              cansend vcan0 202#03E8000000000000
+
+              sleep 1
+
+              # Verify topics published
+              timeout 5 ros2 topic echo /antenna/encoder_feedback --once | grep -q 'az_angle_deg' \
+                && echo '[PASS] encoder_feedback' || (echo '[FAIL] encoder_feedback' && exit 1)
+
+              timeout 5 ros2 topic echo /imu/raw --once | grep -q 'linear_acceleration' \
+                && echo '[PASS] imu/raw' || (echo '[FAIL] imu/raw' && exit 1)
+
+              timeout 5 ros2 topic echo /magnetic_field --once | grep -q 'magnetic_field' \
+                && echo '[PASS] magnetic_field' || (echo '[FAIL] magnetic_field' && exit 1)
+
+              kill \$BRIDGE_PID 2>/dev/null || true
+              echo 'CAN bridge integration test PASSED'
+            "
+
+      - name: Integration test — sensor_fusion_node
+        run: |
+          docker run --rm --network host \
+            -v ${{ github.workspace }}:/ros2_ws \
+            antenna_tracker_env bash -c "
+              set -e
+              source /opt/ros/humble/setup.bash
+              source /ros2_ws/install/setup.bash
+
+              # Start sensor_fusion_node
+              ros2 run antenna_tracker_controller sensor_fusion_node &
+              FUSION_PID=\$!
+              sleep 2
+
+              # Publish mock IMU (raw accel+gyro, identity orientation)
+              ros2 topic pub --once /imu/raw sensor_msgs/msg/Imu \
+                '{header: {frame_id: imu_link},
+                  linear_acceleration: {x: 0.0, y: 0.0, z: 9.81},
+                  angular_velocity: {x: 0.0, y: 0.0, z: 0.0},
+                  orientation_covariance: [-1,0,0,0,0,0,0,0,0]}' &
+
+              # Publish mock mag
+              ros2 topic pub --once /magnetic_field sensor_msgs/msg/MagneticField \
+                '{header: {frame_id: imu_link},
+                  magnetic_field: {x: 0.00003, y: 0.0, z: 0.00004}}' &
+
+              sleep 3
+
+              # Verify imu_fusion published
+              timeout 5 ros2 topic echo /antenna/imu_fusion --once | grep -q 'azimuth' \
+                && echo '[PASS] imu_fusion' || (echo '[FAIL] imu_fusion' && exit 1)
+
+              kill \$FUSION_PID 2>/dev/null || true
+              echo 'sensor_fusion integration test PASSED'
+            "
+
       - name: Push Docker image (CD)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
