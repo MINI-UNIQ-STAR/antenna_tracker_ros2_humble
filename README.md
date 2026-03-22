@@ -18,11 +18,15 @@ STM32H7 Nucleo(Zephyr RTOS) + RPi4B(Ubuntu 22.04 PREEMPT_RT) + Acados NMPC
 │  TWAI (내장CAN)         FDCAN1                  MCP2515 SPI-HAT  │
 │  0x100 Target GPS   →  0x200 Accel        →   can_bridge_node  │
 │  0x101 Target Status   0x201 Gyro             ├─ /imu/raw       │
-│                         0x202 Mag              ├─ /magnetic_field│
-│                         0x203 GPS fix          ├─ /gps/fix       │
-│                         0x204 Encoder          ├─ /encoder_fb    │
-│                         0x205 Heartbeat        └─ /target_gps   │
-│                    ←   0x300 Motor Cmd                           │
+│  0x102 UTC/Status       0x202 Mag              ├─ /magnetic_field│
+│  0x103 Accel/GyroX      0x203 GPS fix          ├─ /gps/fix       │
+│  0x104 GyroYZ/MagXY     0x204 Encoder          ├─ /encoder_fb    │
+│  0x105 MagZ/Roll/Pitch  0x205 Heartbeat        ├─ /target_gps   │
+│  0x106 Temperature                             └─ /balloon/telem │
+│  0x107 Pressure/CO2    ←   0x300 Motor Cmd                      │
+│  0x108 Air Quality                                               │
+│  0x109 Radiation/Bat                                             │
+│  0x10A Seq/Uptime                                                │
 └─────────────────────────────────────────────────────────────────┘
 
 RPi4B ROS 2 Nodes:
@@ -81,6 +85,7 @@ I2C2 (PB10/PB11): AS5600@0x36 (고각 엔코더), MLX90393@0x0C (지자기계)
 ```
 src/
 ├── antenna_tracker_msgs/       # 커스텀 메시지/서비스/액션
+│   └── msg/BalloonTelemetry.msg  # Space Balloon 텔레메트리 통합 메시지 (59필드)
 ├── antenna_tracker_hardware/   # CAN 브릿지 노드 (SocketCAN ↔ ROS 2)
 ├── antenna_tracker_controller/ # NMPC, 센서퓨전, 네비게이션, 상태머신
 ├── antenna_tracker_simulation/ # Gazebo Fortress URDF + sim_motor_bridge
@@ -93,8 +98,9 @@ firmware/                       # STM32H7 Nucleo — Zephyr RTOS CAN 펌웨어
   └── prj.conf                  # Zephyr Kconfig (CONFIG_CAN=y)
 
 firmware_esp32/                 # TTGO LoRa 32 V2.1 — Zephyr RTOS LoRa-CAN 펌웨어
-  ├── src/main.c                # LoRa RX (SX1276) → CAN TX (TWAI 0x100/0x101)
-  ├── app.overlay               # 디바이스 트리 오버레이 (SPI2, TWAI GPIO32/33)
+  ├── src/main.c                # LoRa RX (SX1276, 915MHz SF11) → telemetry_frame_t 파싱
+  │                             # → CAN TX (TWAI, 0x100~0x10A, 11개 프레임)
+  ├── app.overlay               # 디바이스 트리 오버레이 (SPI2=SX1276 LoRa, TWAI GPIO32/33=CAN)
   └── prj.conf                  # Zephyr Kconfig (CONFIG_LORA=y, CONFIG_CAN=y)
 
 scripts/                        # 설치/배포 자동화 스크립트
@@ -344,6 +350,36 @@ cansend vcan0 203#6396C1011A7B9007
 cansend vcan0 100#A0FF370107807900
 ```
 
+#### Balloon Telemetry 시뮬 (0x100~0x10A, 11개 프레임)
+
+ESP32가 LoRa로 수신한 Space Balloon 텔레메트리를 시뮬하려면 11개 프레임을 모두 전송해야
+`/balloon/telemetry` 토픽이 발행됩니다.
+
+```bash
+# 0x100: lat×1e7=0, lon×1e7=0
+cansend vcan0 100#0000000000000000
+# 0x101: kf_alt=0, rssi=0, fix=1, sats=8, h=12, m=0
+cansend vcan0 101#0000000001080C00
+# 0x102: sec=0, day=1, mon=3, sats_view=8, year=2026(LE), flags=0
+cansend vcan0 102#00010308EA070000
+# 0x103: accel_xyz=0(int16×100), gyro_x=0(int16×1000)
+cansend vcan0 103#0000000000000000
+# 0x104: gyro_yz=0, mag_xy=0(int16×10)
+cansend vcan0 104#0000000000000000
+# 0x105: mag_z=0, kf_roll=0, kf_pitch=0, press_alt=0
+cansend vcan0 105#0000000000000000
+# 0x106: board/ext/sht31 temp=0, sht31_rh=0
+cansend vcan0 106#0000000000000000
+# 0x107: ms5611_press=0(u32), ms5611_temp=0, co2=400ppm(LE)
+cansend vcan0 107#0000000000009001
+# 0x108: pm1/pm25/pm10=0, ozone=0
+cansend vcan0 108#0000000000000000
+# 0x109: gdk101=0, bat_mv=3700(LE), bat_temp=0, heater=0
+cansend vcan0 109#0000740E00000000
+# 0x10A: seq=1(LE), uptime=1000ms(LE)
+cansend vcan0 10A#0100E80300000000
+```
+
 ### 5. 토픽 확인
 
 ```bash
@@ -351,6 +387,7 @@ ros2 topic echo /antenna/encoder_feedback
 ros2 topic echo /imu/raw
 ros2 topic echo /magnetic_field
 ros2 topic echo /antenna/imu_fusion
+ros2 topic echo /balloon/telemetry
 ```
 
 ### 6. Gazebo Fortress 시뮬레이션
@@ -442,6 +479,7 @@ sudo cyclictest -l100000 -m -Sp90 -i200 -h400 -q
 | `/gps/fix` | sensor_msgs/NavSatFix | 1Hz | STM32H7 → RPi4B |
 | `/antenna/encoder_feedback` | EncoderFeedback | 100Hz | STM32H7 → RPi4B |
 | `/antenna/target_gps` | TargetGPS | CAN 수신 시 | ESP32 → RPi4B |
+| `/balloon/telemetry` | BalloonTelemetry | LoRa 수신 시 | ESP32 → RPi4B |
 | `/antenna/imu_fusion` | ImuFusion | 100Hz | sensor_fusion_node |
 | `/antenna/motor_cmd` | MotorCommand | 100Hz | RPi4B → STM32H7 |
 | `/antenna/state` | AntennaState | 10Hz | state_machine_node |
@@ -468,17 +506,26 @@ ros2 action send_goal /antenna/track_target antenna_tracker_msgs/action/TrackTar
 
 ## CAN 프로토콜 요약
 
-| CAN ID | 송신자 | 데이터 형식 | 내용 |
-|--------|--------|------------|------|
-| 0x100 | ESP32 | int32 LE × 2 (8B) | Target lat×1e7, lon×1e7 |
-| 0x101 | ESP32 | int16 × 2 + uint8 (5B) | 고도, RSSI, 링크품질 |
-| 0x200 | STM32H7 | int16 BE × 3 (6B) | Accel ax,ay,az (×1000 m/s²) |
-| 0x201 | STM32H7 | int16 BE × 3 (6B) | Gyro gx,gy,gz (×1000 rad/s) |
-| 0x202 | STM32H7 | int16 BE × 3 (6B) | Mag mx,my,mz (×100 µT) |
-| 0x203 | STM32H7 | int32 LE × 2 (8B) | GPS lat×1e7, lon×1e7 |
-| 0x204 | STM32H7 | int16 BE × 2 + uint8 (5B) | Encoder az×10, el×10 + flags |
-| 0x205 | STM32H7 | uint32 LE + uint8 (5B) | Heartbeat uptime_ms + status |
-| 0x300 | RPi4B | int16 LE × 2 + uint8 (5B) | Motor az_freq×10, el_freq×10 + flags |
+| CAN ID | 송신자 | 크기 | 내용 |
+|--------|--------|------|------|
+| 0x100 | ESP32 | 8B | Balloon lat×1e7(int32 LE), lon×1e7(int32 LE) |
+| 0x101 | ESP32 | 8B | kf_alt(int16 LE), rssi(int16 LE), fix, sats_used, hour, min |
+| 0x102 | ESP32 | 8B | sec, day, mon, sats_view, year(uint16 LE), status_flags(uint16 LE) |
+| 0x103 | ESP32 | 8B | accel_x/y/z(int16 LE ×100 m/s²), gyro_x(int16 LE ×1000 rad/s) |
+| 0x104 | ESP32 | 8B | gyro_y/z(int16 LE ×1000 rad/s), mag_x/y(int16 LE ×10 µT) |
+| 0x105 | ESP32 | 8B | mag_z(int16 LE ×10 µT), kf_roll/pitch(int16 LE ×100 °), press_alt(int16 LE ×10 m) |
+| 0x106 | ESP32 | 8B | board/ext/sht31 temp(int16 LE ×100 °C), sht31_rh(uint16 LE ×100 %) |
+| 0x107 | ESP32 | 8B | ms5611_press(uint32 LE Pa), ms5611_temp(int16 LE ×100 °C), co2(uint16 LE ppm) |
+| 0x108 | ESP32 | 8B | pm1/pm25/pm10(uint16 LE µg/m³), ozone(int16 LE ppb) |
+| 0x109 | ESP32 | 8B | gdk101(uint16 LE ×100 µSv/h), bat_mv(uint16 LE), bat_temp(int16 LE ×100 °C), heater(uint8 × 2) |
+| 0x10A | ESP32 | 8B | seq(uint16 LE), uptime_ms(uint32 LE), pad(uint16) |
+| 0x200 | STM32H7 | 6B | Accel ax,ay,az (int16 BE ×1000 m/s²) |
+| 0x201 | STM32H7 | 6B | Gyro gx,gy,gz (int16 BE ×1000 rad/s) |
+| 0x202 | STM32H7 | 6B | Mag mx,my,mz (int16 BE ×100 µT) |
+| 0x203 | STM32H7 | 8B | GPS lat×1e7, lon×1e7 (int32 LE) |
+| 0x204 | STM32H7 | 5B | Encoder az×10, el×10 (int16 BE) + flags |
+| 0x205 | STM32H7 | 5B | Heartbeat uptime_ms (uint32 LE) + status |
+| 0x300 | RPi4B | 5B | Motor az_freq×10, el_freq×10 (int16 LE) + flags |
 
 flags (0x300): bit0=az_dir, bit1=el_dir, bit2=estop
 
