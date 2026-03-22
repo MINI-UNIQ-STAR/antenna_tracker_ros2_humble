@@ -137,6 +137,61 @@ jobs:
               echo 'sensor_fusion integration test PASSED'
             "
 
+      - name: Integration test — balloon telemetry (0x100~0x10A)
+        run: |
+          docker run --rm --privileged --network host \
+            -v ${{ github.workspace }}:/ros2_ws \
+            antenna_tracker_env bash -c "
+              set -e
+              source /opt/ros/humble/setup.bash
+              source /ros2_ws/install/setup.bash
+
+              # Start can_bridge_node on vcan0
+              ros2 run antenna_tracker_hardware can_bridge_node \
+                --ros-args -p can_interface:=vcan0 &
+              BRIDGE_PID=\$!
+              sleep 2
+
+              # /balloon/telemetry 리스너를 먼저 시작 (11 프레임 수신 후 발행)
+              timeout 15 ros2 topic echo /balloon/telemetry --once > /tmp/balloon.txt &
+              sleep 2  # subscribe 대기
+
+              # 11개 CAN 프레임 전송 (0x100~0x10A, 8 bytes each)
+              # 0x100: lat_e7=0, lon_e7=0
+              cansend vcan0 100#0000000000000000
+              # 0x101: kf_alt=0(int16), rssi=0(int16), fix=1, sats=8, h=12, m=0
+              cansend vcan0 101#0000000001080C00
+              # 0x102: sec=0,day=1,mon=3,sats_view=8, year=2026(EA07 LE), flags=0
+              cansend vcan0 102#00010308EA070000
+              # 0x103: accel_xyz=0(int16×100), gyro_x=0(int16×1000)
+              cansend vcan0 103#0000000000000000
+              # 0x104: gyro_yz=0, mag_xy=0(int16×10)
+              cansend vcan0 104#0000000000000000
+              # 0x105: mag_z=0, kf_roll=0, kf_pitch=0, press_alt=0
+              cansend vcan0 105#0000000000000000
+              # 0x106: board/ext/sht31 temp=0, sht31_rh=0
+              cansend vcan0 106#0000000000000000
+              # 0x107: ms5611_press=0(u32), ms5611_temp=0, co2=400ppm(9001 LE)
+              cansend vcan0 107#0000000000009001
+              # 0x108: pm1/pm25/pm10=0, ozone=0
+              cansend vcan0 108#0000000000000000
+              # 0x109: gdk101=0, bat_mv=3700(740E LE), bat_temp=0, heater=0
+              cansend vcan0 109#0000740E00000000
+              # 0x10A: seq=1(0100 LE), uptime=1000ms(E8030000 LE), pad=0000
+              cansend vcan0 10A#0100E80300000000
+
+              # 수신 대기
+              sleep 10
+
+              # 결과 확인
+              grep -q 'latitude' /tmp/balloon.txt \
+                && echo '[PASS] balloon/telemetry' \
+                || (echo '[FAIL] balloon/telemetry' && cat /tmp/balloon.txt && exit 1)
+
+              kill \$BRIDGE_PID 2>/dev/null || true
+              echo 'Balloon telemetry integration test PASSED'
+            "
+
       - name: Push Docker image (CD)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: |
