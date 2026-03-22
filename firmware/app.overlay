@@ -45,14 +45,15 @@
         reg = <0x36>;
     };
 
-    bno055: bno055@28 {
+    bmi270: bmi270@68 {
         compatible = "i2c-device";
-        reg = <0x28>;
+        reg = <0x68>;
     };
 };
 
-/* I2C2: AS5600 Elevation (PB10=SCL, PB11=SDA, CN10)
+/* I2C2: AS5600 Elevation + MLX90393 Compass (PB10=SCL, PB11=SDA, CN10)
  * AS5600 주소는 0x36 고정 → I2C1(Azimuth)과 충돌 방지를 위해 별도 버스 사용
+ * MLX90393 기본 주소 0x0C (A0=A1=0)
  */
 &i2c2 {
     status = "okay";
@@ -63,6 +64,11 @@
     as5600_el: as5600@36 {
         compatible = "i2c-device";
         reg = <0x36>;
+    };
+
+    mlx90393: mlx90393@0c {
+        compatible = "i2c-device";
+        reg = <0x0c>;
     };
 };
 

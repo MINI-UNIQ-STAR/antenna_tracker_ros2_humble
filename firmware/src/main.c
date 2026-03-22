@@ -50,7 +50,7 @@ const struct device *can_dev = DEVICE_DT_GET(DT_NODELABEL(fdcan1));
 /* ── Sensor Addresses ─────────────────────────────────────────────────────── */
 #define AS5600_ADDR    0x36
 #define BMI270_ADDR    0x68
-#define MLX90393_ADDR  0x18
+#define MLX90393_ADDR  0x0C
 
 /* BMI270 Registers */
 #define BMI270_CHIP_ID_REG 0x00
@@ -126,7 +126,7 @@ static int init_bmi270(void)
 static int init_mlx90393(void)
 {
     uint8_t cmd = MLX_CMD_EXIT;
-    return i2c_write(i2c_dev1, &cmd, 1, MLX90393_ADDR);
+    return i2c_write(i2c_dev2, &cmd, 1, MLX90393_ADDR);
 }
 
 static float read_as5600_angle(const struct device *dev)
@@ -171,12 +171,12 @@ static void read_bmi270(int16_t *ax, int16_t *ay, int16_t *az,
 static void read_mlx90393(int16_t *mx, int16_t *my, int16_t *mz)
 {
     uint8_t sb_cmd = MLX_CMD_SB;
-    i2c_write(i2c_dev1, &sb_cmd, 1, MLX90393_ADDR);
+    i2c_write(i2c_dev2, &sb_cmd, 1, MLX90393_ADDR);
     k_msleep(10); /* Conversion time */
 
     uint8_t rm_cmd = MLX_CMD_RM;
     uint8_t buf[7];
-    if (i2c_write_read(i2c_dev1, MLX90393_ADDR, &rm_cmd, 1, buf, 7) == 0) {
+    if (i2c_write_read(i2c_dev2, MLX90393_ADDR, &rm_cmd, 1, buf, 7) == 0) {
         /* µT × 100 (simplified scale) */
         *mx = (int16_t)(((buf[1] << 8) | buf[2]) / 10);
         *my = (int16_t)(((buf[3] << 8) | buf[4]) / 10);
