@@ -1,43 +1,64 @@
 # Antenna Tracker ROS 2 Humble
 
-[![ROS 2 Build](https://github.com/HyeonsuParkembedded/antenna_tracker_ros2_humble/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/HyeonsuParkembedded/antenna_tracker_ros2_humble/actions)
+[![CI/CD](https://github.com/HyeonsuParkembedded/antenna_tracker_ros2_humble/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/HyeonsuParkembedded/antenna_tracker_ros2_humble/actions)
 
-**야기 안테나(13dBi, 빔폭 ±2°) 자동 추적 시스템** — STM32H7 Nucleo(micro-ROS) + RPi4B(Ubuntu 22.04 PREEMPT_RT) + Acados NMPC
+**야기 안테나(13dBi, 빔폭 ±2°) 자동 추적 시스템**
+STM32H7 Nucleo(Zephyr RTOS) + RPi4B(Ubuntu 22.04 PREEMPT_RT) + Acados NMPC
+**단일 CAN 2.0B 버스(500kbps)** 로 ESP32 · STM32H7 · RPi4B 3노드 통신
 
 ---
 
-## 시스템 구성
+## 시스템 아키텍처
 
 ```
-[ESP32 LoRa] ──CAN 500kbps──▶ [MCP2515 SPI-CAN] ──SPI──▶ [RPi4B]
-(Target GPS)                   (RPi4B HAT)                  ROS 2 Humble
-                                                              ├── sensor_fusion_node
-[STM32H7 Nucleo] ─USB CDC─▶   micro_ros_agent               ├── navigation_node
-  BMI270 (I2C1)                 /imu/raw                     ├── controller_node (NMPC 100Hz)
-  MLX90393 (I2C1)               /magnetic_field              ├── state_machine_node
-  XA1110 (UART)                 /gps/fix                     └── can_bridge_node
-  AS5600 (I2C1/2)               /antenna/encoder_feedback    
-  TB6600 Stepper                /antenna/motor_cmd ◀──       
+┌─────────────────────────────────────────────────────────────────┐
+│                    CAN 2.0B Bus  500kbps                        │
+│                                                                  │
+│  [ESP32 LoRa]          [STM32H7 Nucleo]        [RPi4B]          │
+│  TWAI (내장CAN)         FDCAN1                  MCP2515 SPI-HAT  │
+│  0x100 Target GPS   →  0x200 Accel        →   can_bridge_node  │
+│  0x101 Target Status   0x201 Gyro             ├─ /imu/raw       │
+│                         0x202 Mag              ├─ /magnetic_field│
+│                         0x203 GPS fix          ├─ /gps/fix       │
+│                         0x204 Encoder          ├─ /encoder_fb    │
+│                         0x205 Heartbeat        └─ /target_gps   │
+│                    ←   0x300 Motor Cmd                           │
+└─────────────────────────────────────────────────────────────────┘
 
-[Browser] ─── rosbridge :9090 ──▶ GCS 웹 대시보드 (:8080)
-[Gazebo Fortress] ─── ros_gz_bridge ──▶ 시뮬레이션
+RPi4B ROS 2 Nodes:
+  sensor_fusion_node  → Comp Filter (α=0.98) + Kalman → /antenna/imu_fusion
+  navigation_node     → az/el 각도 계산
+  controller_node     → Acados NMPC 100Hz → /antenna/motor_cmd
+  state_machine_node  → AUTO / MANUAL / STANDBY / EMERGENCY
+  can_bridge_node     → CAN ↔ ROS 2 변환
+
+[Browser] ── rosbridge :9090 ──▶ GCS 웹 대시보드 (:8080)
+[Gazebo Fortress] ── ros_gz_bridge ──▶ SITL 시뮬레이션
 ```
 
 ---
 
 ## 하드웨어 스펙
 
-| 구성요소 | 모델 | 인터페이스 |
-|---------|------|-----------|
-| MCU | STM32H7A3ZI-Q Nucleo | micro-ROS USB CDC (`/dev/ttyACM0`) |
-| IMU | BMI270 | I2C1 (0x68) |
-| 지자기계 | MLX90393 | I2C1 (0x18) |
-| GPS | XA1110 | UART (gps_uart alias) |
-| 인코더 | AS5600 x2 | Dual-Bus I2C (Az: I2C1, El: I2C2) |
-| 모터 드라이버 | TB6600 x2 | STEP/DIR/EN GPIO (10kHz k_timer) |
-| CAN 컨트롤러 | **MCP2515** (SPI-CAN HAT) | SPI0, INT→GPIO25 |
-| LoRa 모듈 | ESP32 LoRa | CAN 2.0B 500kbps |
-| 안테나 | 야기 13dBi | 빔폭 4° (±2°), 추적 정밀도 ±1° |
+| 구성요소 | 모델 | 인터페이스 | 주소/핀 |
+|---------|------|-----------|---------|
+| MCU | STM32H7A3ZI-Q Nucleo | FDCAN1 (CAN 버스) | PD0(RX), PD1(TX) |
+| IMU | BMI270 | I2C1 | 0x68 (SDO=GND) |
+| 지자기계 | MLX90393 | I2C2 | 0x0C (A0=A1=0) |
+| GPS | XA1110 | USART1 | PA9(TX), PA10(RX), 9600 baud |
+| 인코더 (방위각) | AS5600 | I2C1 | 0x36 |
+| 인코더 (고각) | AS5600 | I2C2 | 0x36 |
+| 모터 드라이버 | TB6600 x2 | GPIO | AZ: PD14/PD15/PE9, EL: PE11/PF14/PE13 |
+| CAN (RPi4B) | MCP2515 SPI-HAT | SPI0 | CS→GPIO8, INT→GPIO25 |
+| CAN (ESP32) | TWAI (내장) | — | 500kbps CAN 2.0B |
+| LoRa | ESP32 내장 | — | Target GPS 수신 |
+| 안테나 | 야기 13dBi | — | 빔폭 4°, 추적 정밀도 ±1° |
+
+**I2C 버스 배선:**
+```
+I2C1 (PB8/PB9): AS5600@0x36 (방위각 엔코더), BMI270@0x68 (IMU)
+I2C2 (PB10/PB11): AS5600@0x36 (고각 엔코더), MLX90393@0x0C (지자기계)
+```
 
 ---
 
@@ -46,9 +67,9 @@
 | 구성 | 버전 |
 |------|------|
 | ROS 2 | Humble |
-| micro-ROS | Humble (Zephyr RTOS) |
-| 제어 알고리즘 | **Acados NMPC** (비선형 모델 예측 제어) |
-| 센서 퓨전 | Complementary Filter (α=0.98) + Kalman (Q=0.001, R=2.0) |
+| 펌웨어 RTOS | Zephyr RTOS (Zephyr SDK 0.16.8) |
+| 제어 알고리즘 | Acados NMPC (비선형 모델 예측 제어) |
+| 센서 퓨전 | Complementary Filter (α=0.98) + Linear Kalman |
 | 시뮬레이터 | Gazebo Fortress (`ros_gz_bridge`) |
 | CI/CD | GitHub Actions + GHCR Docker |
 | OS (RPi4B) | Ubuntu 22.04 + PREEMPT_RT 커널 |
@@ -60,31 +81,54 @@
 ```
 src/
 ├── antenna_tracker_msgs/       # 커스텀 메시지/서비스/액션
-├── antenna_tracker_hardware/   # CAN 브릿지 노드
+├── antenna_tracker_hardware/   # CAN 브릿지 노드 (SocketCAN ↔ ROS 2)
 ├── antenna_tracker_controller/ # NMPC, 센서퓨전, 네비게이션, 상태머신
 ├── antenna_tracker_simulation/ # Gazebo Fortress URDF + sim_motor_bridge
 ├── antenna_tracker_bringup/    # 런치 파일 + 파라미터
 └── antenna_tracker_web/        # GCS 웹 대시보드 (rosbridge + HTTP)
 
-firmware/                       # STM32H7 Zephyr micro-ROS 펌웨어
+firmware/                       # STM32H7 Zephyr CAN 펌웨어
+  ├── src/main.c                # CAN TX/RX + 센서 읽기 + 스테퍼 제어
+  ├── app.overlay               # 디바이스 트리 오버레이
+  └── prj.conf                  # Zephyr Kconfig
 scripts/                        # 설치/배포 자동화 스크립트
 ```
 
 ---
 
-## 빠른 시작
+## 설치
 
-### 1. RPi4B 환경 설정 (최초 1회)
+### 사전 요구사항
+
+- RPi4B: Ubuntu 22.04 (PREEMPT_RT 커널 권장)
+- ROS 2 Humble
+- Zephyr SDK 0.16.8 (펌웨어 빌드 시)
+- Docker (개발/SITL 환경)
+
+### RPi4B 환경 설정 (최초 1회)
 
 ```bash
 cd scripts
 bash setup_ros2_humble.sh      # ROS 2 Humble + Acados NMPC 라이브러리
 bash install_preempt_rt.sh     # PREEMPT_RT 커널 빌드 (~2시간) → reboot 필요
-bash setup_micro_ros.sh        # micro-ROS agent
 bash setup_can.sh              # MCP2515 dtoverlay 설정 + can0 활성화
 ```
 
-### 2. 워크스페이스 빌드
+> ⚠️ MCP2515 오실레이터가 8MHz/12MHz인 경우 `setup_can.sh`에서 `oscillator=16000000`을 실제 값으로 수정하세요.
+
+### MCP2515 배선 (RPi4B)
+
+```
+MCP2515 VCC  → Pin 17 (3.3V)
+MCP2515 GND  → Pin 20 (GND)
+MCP2515 SCK  → Pin 23 (GPIO11, SPI0_CLK)
+MCP2515 MOSI → Pin 19 (GPIO10, SPI0_MOSI)
+MCP2515 MISO → Pin 21 (GPIO9,  SPI0_MISO)
+MCP2515 CS   → Pin 24 (GPIO8,  SPI0_CE0)
+MCP2515 INT  → Pin 22 (GPIO25)
+```
+
+### ROS 2 워크스페이스 빌드
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -92,22 +136,13 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-### 3. 실행
+### 펌웨어 빌드 및 플래시 (STM32H7)
 
 ```bash
-# 하드웨어 (STM32 USB 연결 필요)
-ros2 launch antenna_tracker_bringup hardware.launch.py
+# Zephyr 환경 활성화
+source ~/zephyrproject/.venv/bin/activate
+source ~/zephyrproject/zephyr/zephyr-env.sh
 
-# 시뮬레이션 (Gazebo Fortress)
-ros2 launch antenna_tracker_bringup sim.launch.py
-
-# GCS 웹 대시보드 → http://<RPi4B-IP>:8080
-ros2 launch antenna_tracker_bringup web.launch.py
-```
-
-### 4. 펌웨어 플래시 (STM32H7)
-
-```bash
 cd firmware
 west build -b nucleo_h7a3zi_q
 west flash
@@ -115,18 +150,161 @@ west flash
 
 ---
 
+## SITL (Software In The Loop) — vcan + Docker
+
+하드웨어 없이 PC에서 전체 소프트웨어 스택을 검증하는 방법입니다.
+
+### 1. vcan 인터페이스 설정
+
+```bash
+sudo modprobe vcan
+sudo ip link add dev vcan0 type vcan
+sudo ip link set up vcan0
+```
+
+### 2. Docker 컨테이너 실행
+
+```bash
+cd docker
+xhost +local:docker   # Gazebo GUI 필요 시
+docker compose up -d
+docker exec -it antenna_tracker_dev bash
+```
+
+### 3. ROS 2 빌드 및 실행
+
+```bash
+# 컨테이너 내부
+source /opt/ros/humble/setup.bash
+cd /ros2_ws
+colcon build --symlink-install
+source install/setup.bash
+
+# CAN 브릿지 (vcan0 사용)
+ros2 run antenna_tracker_hardware can_bridge_node \
+  --ros-args -p can_interface:=vcan0
+
+# 별도 터미널: 전체 스택 실행
+ros2 launch antenna_tracker_bringup hardware.launch.py can_interface:=vcan0
+```
+
+### 4. 가상 센서 데이터 주입 (cansend)
+
+```bash
+# 엔코더: az=288.0°, el=90.0°
+cansend vcan0 204#0B40038403
+
+# IMU 가속도: ax=1.0 m/s² (int16 × 1000, Big-Endian)
+cansend vcan0 200#03E8000003E8000000000000
+
+# IMU 자이로: gx=0.1 rad/s (int16 × 1000)
+cansend vcan0 201#006400640064
+
+# 지자기: mx=30µT (int16 × 100)
+cansend vcan0 202#0BB80BB80BB8
+
+# GPS: lat=37.5665°, lon=126.978°
+cansend vcan0 203#6396C1011A7B9007
+
+# Target GPS (ESP32 시뮬): lat=37.57°, lon=126.98°
+cansend vcan0 100#A0FF370107807900
+```
+
+### 5. 토픽 확인
+
+```bash
+ros2 topic echo /antenna/encoder_feedback
+ros2 topic echo /imu/raw
+ros2 topic echo /magnetic_field
+ros2 topic echo /antenna/imu_fusion
+```
+
+### 6. Gazebo Fortress 시뮬레이션
+
+```bash
+# 컨테이너 내부 (Xvfb 헤드리스 or DISPLAY 필요)
+ros2 launch antenna_tracker_bringup sim.launch.py
+```
+
+---
+
+## HITL (Hardware In The Loop) — 실제 하드웨어
+
+실제 STM32H7 보드와 CAN 버스를 연결하여 ROS 2와 통신하는 방법입니다.
+
+### 1. STM32H7 펌웨어 플래시
+
+```bash
+source ~/zephyrproject/.venv/bin/activate
+source ~/zephyrproject/zephyr/zephyr-env.sh
+cd firmware
+west build -b nucleo_h7a3zi_q
+west flash
+```
+
+### 2. CAN 버스 물리 연결
+
+```
+STM32H7 Nucleo ─── CAN 트랜시버 ─── CAN H/L 버스 ─── MCP2515 (RPi4B)
+  PD1 (FDCAN1 TX)                                         SPI0
+  PD0 (FDCAN1 RX)
+
+ESP32 ──────────── CAN 트랜시버 ─── CAN H/L 버스 (동일 버스)
+  TWAI TX
+  TWAI RX
+
+※ 버스 양단에 120Ω 종단 저항 필수
+```
+
+### 3. RPi4B에서 CAN 인터페이스 활성화
+
+```bash
+sudo ip link set can0 up type can bitrate 500000
+ip link show can0    # 상태 확인
+
+# 수신 모니터링
+candump can0
+```
+
+### 4. ROS 2 실행
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+# CAN 브릿지 실행 (실제 can0 사용)
+ros2 launch antenna_tracker_bringup hardware.launch.py
+
+# GCS 웹 대시보드
+ros2 launch antenna_tracker_bringup web.launch.py
+# → http://<RPi4B-IP>:8080
+```
+
+### 5. 실시간 실행 (PREEMPT_RT)
+
+```bash
+# controller_node를 core 2,3에 고정, RT 우선순위 80
+sudo chrt -f 80 taskset -c 2,3 ros2 run antenna_tracker_controller controller_node
+
+# 지터 측정 (목표: Max < 2ms)
+sudo cyclictest -l100000 -m -Sp90 -i200 -h400 -q
+```
+
+---
+
 ## 주요 토픽
 
-| 토픽 | 타입 | 주기 |
-|------|------|------|
-| `/imu/raw` | sensor_msgs/Imu | 100Hz |
-| `/magnetic_field` | sensor_msgs/MagneticField | 100Hz |
-| `/gps/fix` | sensor_msgs/NavSatFix | 1Hz |
-| `/antenna/encoder_feedback` | EncoderFeedback | 100Hz |
-| `/antenna/motor_cmd` | MotorCommand | 100Hz |
-| `/antenna/state` | AntennaState | 10Hz |
-| `/antenna/target_gps` | TargetGPS | CAN 수신 시 |
-| `/antenna/diagnostics` | TrackerDiagnostics | 1Hz |
+| 토픽 | 타입 | 주기 | 방향 |
+|------|------|------|------|
+| `/imu/raw` | sensor_msgs/Imu | 100Hz | STM32H7 → RPi4B |
+| `/magnetic_field` | sensor_msgs/MagneticField | 100Hz | STM32H7 → RPi4B |
+| `/gps/fix` | sensor_msgs/NavSatFix | 1Hz | STM32H7 → RPi4B |
+| `/antenna/encoder_feedback` | EncoderFeedback | 100Hz | STM32H7 → RPi4B |
+| `/antenna/target_gps` | TargetGPS | CAN 수신 시 | ESP32 → RPi4B |
+| `/antenna/imu_fusion` | ImuFusion | 100Hz | sensor_fusion_node |
+| `/antenna/motor_cmd` | MotorCommand | 100Hz | RPi4B → STM32H7 |
+| `/antenna/state` | AntennaState | 10Hz | state_machine_node |
+| `/antenna/diagnostics` | TrackerDiagnostics | 1Hz | controller_node |
 
 ---
 
@@ -147,32 +325,21 @@ ros2 action send_goal /antenna/track_target antenna_tracker_msgs/action/TrackTar
 
 ---
 
-## PREEMPT_RT 실시간 실행
+## CAN 프로토콜 요약
 
-```bash
-# controller_node를 core 2,3에 고정, RT 우선순위 80
-sudo chrt -f 80 taskset -c 2,3 ros2 run antenna_tracker_controller controller_node
+| CAN ID | 송신자 | 데이터 형식 | 내용 |
+|--------|--------|------------|------|
+| 0x100 | ESP32 | int32 LE × 2 (8B) | Target lat×1e7, lon×1e7 |
+| 0x101 | ESP32 | int16 × 2 + uint8 (5B) | 고도, RSSI, 링크품질 |
+| 0x200 | STM32H7 | int16 BE × 3 (6B) | Accel ax,ay,az (×1000 m/s²) |
+| 0x201 | STM32H7 | int16 BE × 3 (6B) | Gyro gx,gy,gz (×1000 rad/s) |
+| 0x202 | STM32H7 | int16 BE × 3 (6B) | Mag mx,my,mz (×100 µT) |
+| 0x203 | STM32H7 | int32 LE × 2 (8B) | GPS lat×1e7, lon×1e7 |
+| 0x204 | STM32H7 | int16 BE × 2 + uint8 (5B) | Encoder az×10, el×10 + flags |
+| 0x205 | STM32H7 | uint32 LE + uint8 (5B) | Heartbeat uptime_ms + status |
+| 0x300 | RPi4B | int16 LE × 2 + uint8 (5B) | Motor az_freq×10, el_freq×10 + flags |
 
-# 지터 측정
-sudo cyclictest -l100000 -m -Sp90 -i200 -h400 -q  # 목표: Max < 2ms
-```
-
----
-
-## MCP2515 배선 (RPi4B)
-
-```
-MCP2515 VCC  → Pin 17 (3.3V)
-MCP2515 GND  → Pin 20 (GND)
-MCP2515 SCK  → Pin 23 (GPIO11, SPI0_CLK)
-MCP2515 MOSI → Pin 19 (GPIO10, SPI0_MOSI)
-MCP2515 MISO → Pin 21 (GPIO9,  SPI0_MISO)
-MCP2515 CS   → Pin 24 (GPIO8,  SPI0_CE0)
-MCP2515 INT  → Pin 22 (GPIO25)
-```
-
-> ⚠️ MCP2515 모듈의 오실레이터가 8MHz 또는 12MHz인 경우 `setup_can.sh` 내
-> `oscillator=16000000` 값을 실물에 맞게 수정하세요.
+flags (0x300): bit0=az_dir, bit1=el_dir, bit2=estop
 
 ---
 
