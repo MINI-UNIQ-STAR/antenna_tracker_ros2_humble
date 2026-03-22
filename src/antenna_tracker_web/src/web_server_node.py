@@ -6,6 +6,7 @@ Serves from the `web/` directory on port 8080 by default.
 import rclpy
 from rclpy.node import Node
 from rcl_interfaces.msg import ParameterDescriptor
+from ament_index_python.packages import get_package_share_directory
 import http.server
 import threading
 import os
@@ -18,7 +19,7 @@ class WebServerNode(Node):
         self.declare_parameter('port', 8080, ParameterDescriptor(description='HTTP server port'))
 
         web_root = self.get_parameter('web_root').value or \
-                   os.path.join(os.path.dirname(__file__), '..', '..', '..', 'share', 'antenna_tracker_web', 'web')
+                   os.path.join(get_package_share_directory('antenna_tracker_web'), 'web')
         port = self.get_parameter('port').value
 
         web_root = os.path.realpath(web_root)
