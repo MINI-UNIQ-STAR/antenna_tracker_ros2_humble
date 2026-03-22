@@ -15,12 +15,13 @@
 
 | 항목 | 결정 |
 |------|------|
-| micro-ROS transport | USB CDC (`/dev/ttyACM0`) |
+| micro-ROS transport | UART (`usart3` → `/dev/ttyUSB0` 또는 `/dev/ttyACM0`) |
 | RPi4B OS | Ubuntu 22.04 + PREEMPT_RT 커널 |
 | 100Hz 제어 루프 | RPi4B `controller_node` (NMPC 기반) |
 | 제어 알고리즘 | Acados NMPC (비선형 모델 예측 제어) |
-| 인코더 방식 | AS5600 (I2C) |
-| IMU 방식 | BNO055 (I2C) |
+| 인코더 방식 | Dual AS5600 (I2C1: Azimuth, I2C2: Elevation) |
+| IMU 방식 | BMI270 (I2C1) + MLX90393 (I2C1) |
+| GPS 방식 | XA1110 (UART: gps_uart alias) |
 | 모터 구동 | TB6600 스텝퍼 (STEP/DIR/EN GPIO, 10kHz k_timer) |
 | ESP32 LoRa 연결 | CAN 2.0B 500kbps (`MCP2515` SPI-CAN HAT, RPi4B SPI0) |
 | 시뮬레이터 | Gazebo Fortress (ros_gz_bridge) |
@@ -30,12 +31,13 @@
 
 ```
 [STM32H7 Nucleo] ──USB CDC──────────────── [RPi4B Ubuntu 22.04 + PREEMPT_RT]
-  Zephyr + micro-ROS Humble                  ROS2 Humble
-  ├── BNO055(I2C) → /imu/raw (100Hz)         ├── /micro_ros_agent (:ttyACM0)
-  ├── AS5600(I2C) → /antenna/encoder_feedback ├── sensor_fusion_node  (100Hz)
-  ├── k_timer 10kHz → TB6600 Stepper         ├── navigation_node     (Haversine)
-  └── /antenna/motor_cmd ← motor_cmd_sub     ├── controller_node     (100Hz NMPC)
-                                              ├── state_machine_node  (AUTO/MANUAL/…)
+   Zephyr + micro-ROS Humble                  ROS2 Humble
+  ├── BMI270(I2C1) → /imu/raw (100Hz)        ├── /micro_ros_agent (:ttyACM0)
+  ├── MLX90393(I2C1) → /magnetic_field       ├── sensor_fusion_node  (100Hz)
+  ├── XA1110(UART) → /gps/fix                ├── navigation_node     (Haversine)
+  ├── AS5600(I2C1/2) → /antenna/encoder_feedback ├── controller_node (100Hz NMPC)
+  ├── k_timer 10kHz → TB6600 Stepper         ├── state_machine_node  (AUTO/MANUAL/…)
+  └── /antenna/motor_cmd ← motor_cmd_sub     
 [ESP32 LoRa] ──CAN 500kbps──────────────→ can_bridge_node
                                               │
 [Browser GCS] ──rosbridge :9090───────────→ /antenna/state, /antenna/motor_cmd, …
@@ -111,6 +113,8 @@ antenna_tracker_ros/
 ```
 Publishers (STM32 → RPi4B):
   /imu/raw                     sensor_msgs/Imu              100Hz
+  /magnetic_field              sensor_msgs/MagneticField    100Hz
+  /gps/fix                     sensor_msgs/NavSatFix        1Hz
   /antenna/encoder_feedback    EncoderFeedback              100Hz
 
 Publishers (RPi4B 내부):
@@ -187,9 +191,9 @@ ros2 launch antenna_tracker_bringup web.launch.py
 
 ## 6. 미해결 이슈 및 주의사항
 
-1. **Hall 센서 핀 매핑** — `app.overlay`의 AS5600 I2C 주소(0x36)와 실제 보드 점퍼 설정 일치 여부 확인 필수.
-2. **BNO055 미완성** — `main.c`의 BNO055 읽기 함수는 scaffolding 수준. 실제 레지스터 시퀀스 구현 필요.
-3. **GPS 미구현** — NEO-6M GPS 파서(`gps_parser.c`)는 HANDOFF 초기 버전의 reference 코드. 현재 빌드에서는 생략됨.
+1. **Hall 센서 핀 매핑** — `app.overlay`의 Dual-Bus 설정(I2C1/I2C2)과 실제 배선 일치 여부 확인 필수.
+2. **BMI270 초기화** — 현재 기본적인 가속도/자이로 읽기만 구현됨. 고정밀 융합을 위해서는 Config Blob 로드가 필요할 수 있음.
+3. **GPS 별칭(Alias)** — `app.overlay`에 `gps_uart` alias가 `&uartx`에 정확히 매핑되어야 함.
 4. **PREEMPT_RT 필수** — RT 커널 없이는 제어 루프 지터 5~20ms 발생 가능.
 5. **MCP2515 SPI-CAN 설정 필수** — RPi4B는 네이티브 CAN 포트가 없어 **MCP2515** SPI-CAN 컨트롤러 모듈을 사용해야 함. `scripts/setup_can.sh`가 `/boot/firmware/config.txt`에 DTB Overlay(`dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25`)를 자동 추가함. 모듈의 **오실레이터 주파수(8/12/16MHz)** 를 실물과 맞춰 `oscillator=` 값을 수정할 것. 배선: VCC→3.3V, GND, SCK→GPIO11, MOSI→GPIO10, MISO→GPIO9, CS→GPIO8(CE0), INT→GPIO25.
 

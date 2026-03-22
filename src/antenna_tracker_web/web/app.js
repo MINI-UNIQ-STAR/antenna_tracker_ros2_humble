@@ -70,6 +70,9 @@ function subscribeTopics() {
             document.getElementById(id).classList.toggle('mode-active', i === modeIdx);
         });
 
+        // Show manual panel only in MANUAL mode (modeIdx===1)
+        document.getElementById('manualPanel').classList.toggle('disabled', modeIdx !== 1);
+
         updateChart(msg.current_azimuth, msg.current_elevation,
                     msg.target_azimuth,  msg.target_elevation);
     });
@@ -117,6 +120,19 @@ function setMode(mode) {
     var request = new ROSLIB.ServiceRequest({ mode: mode });
     client.callService(request, (result) => {
         if (!result.success) alert('Mode change failed: ' + result.message);
+    });
+}
+
+/* ── Manual Target Service ───────────────────────── */
+function setManualTarget() {
+    if (!ros || !ros.isConnected) return;
+    var az = parseFloat(document.getElementById('manualAzSlider').value);
+    var el = parseFloat(document.getElementById('manualElSlider').value);
+    var client = new ROSLIB.Service({ ros: ros, name: '/antenna/set_manual_target',
+                                      serviceType: 'antenna_tracker_msgs/srv/SetManualTarget' });
+    var request = new ROSLIB.ServiceRequest({ azimuth_deg: az, elevation_deg: el });
+    client.callService(request, (result) => {
+        if (!result.success) alert('Manual target failed: ' + result.message);
     });
 }
 

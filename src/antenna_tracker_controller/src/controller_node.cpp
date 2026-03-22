@@ -107,18 +107,35 @@ void ControllerNode::target_el_callback(const std_msgs::msg::Float64::SharedPtr 
 void ControllerNode::mode_callback(const std_msgs::msg::UInt8::SharedPtr msg)
 {
   current_mode_ = msg->data;
-  /* Enable tracking only in AUTO mode (0) */
-  tracking_enabled_ = (current_mode_ == 0);
+  /* Enable tracking in AUTO (0) and MANUAL (1) modes */
+  tracking_enabled_ = (current_mode_ == 0 || current_mode_ == 1);
 }
 
 void ControllerNode::control_timer_callback()
 {
+  /* Always publish antenna state for the UI, regardless of tracking status */
+  auto state_msg = antenna_tracker_msgs::msg::AntennaState();
+  state_msg.header.stamp = now();
+  state_msg.current_azimuth = current_azimuth_;
+  state_msg.current_elevation = current_elevation_;
+  state_msg.target_azimuth = target_azimuth_;
+  state_msg.target_elevation = target_elevation_;
+  state_msg.mode = current_mode_;
+  state_msg.tracking_active = tracking_enabled_;
+
   if (!tracking_enabled_ || !fusion_valid_) {
-    /* Publish zero command */
+    /* Publish zero motor command */
     auto cmd = antenna_tracker_msgs::msg::MotorCommand();
     cmd.header.stamp = now();
-    cmd.emergency_stop = !tracking_enabled_;
+    cmd.emergency_stop = !tracking_enabled_; // true if standby/emergency
     pub_motor_->publish(cmd);
+
+    /* Finish state msg and publish */
+    state_msg.az_error = 0.0;
+    state_msg.el_error = 0.0;
+    state_msg.az_motor_cmd = 0.0;
+    state_msg.el_motor_cmd = 0.0;
+    pub_state_->publish(state_msg);
     return;
   }
 
@@ -147,6 +164,12 @@ void ControllerNode::control_timer_callback()
     el_cmd = 0.0;
   }
 
+  /* AZ deadband: suppress tiny commands near target (no gravity on AZ axis).
+   * EL deadband removed: double-integrator + gravity needs continuous control;
+   * NMPC naturally provides gravity equilibrium (u_el ≈ 50*cos(el)) at steady state. */
+  static constexpr double AZ_DEADBAND_DEG = 0.5;
+  if (std::abs(az_error_raw) < AZ_DEADBAND_DEG) az_cmd = 0.0;
+
   /* Publish motor command */
   auto motor_msg = antenna_tracker_msgs::msg::MotorCommand();
   motor_msg.header.stamp = now();
@@ -157,19 +180,11 @@ void ControllerNode::control_timer_callback()
   motor_msg.emergency_stop = false;
   pub_motor_->publish(motor_msg);
 
-  /* Publish antenna state */
-  auto state_msg = antenna_tracker_msgs::msg::AntennaState();
-  state_msg.header.stamp = now();
-  state_msg.current_azimuth = current_azimuth_;
-  state_msg.current_elevation = current_elevation_;
-  state_msg.target_azimuth = target_azimuth_;
-  state_msg.target_elevation = target_elevation_;
-  state_msg.az_error = az_error_raw;   /* wrap-around corrected error */
+  /* Update active tracking state fields */
+  state_msg.az_error = az_error_raw;
   state_msg.el_error = target_elevation_ - current_elevation_;
   state_msg.az_motor_cmd = az_cmd;
   state_msg.el_motor_cmd = el_cmd;
-  state_msg.mode = current_mode_;
-  state_msg.tracking_active = tracking_enabled_;
   pub_state_->publish(state_msg);
 
   /* Action feedback */

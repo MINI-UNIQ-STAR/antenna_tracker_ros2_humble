@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/nav_sat_fix.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_msgs/msg/u_int8.hpp>
 #include <antenna_tracker_msgs/msg/target_gps.hpp>
 
 namespace antenna_tracker_controller
@@ -17,6 +18,7 @@ public:
 private:
   void gps_callback(const sensor_msgs::msg::NavSatFix::SharedPtr msg);
   void target_callback(const antenna_tracker_msgs::msg::TargetGPS::SharedPtr msg);
+  void mode_callback(const std_msgs::msg::UInt8::SharedPtr msg);
   void compute_and_publish();
 
 public:
@@ -27,8 +29,11 @@ public:
 
   rclcpp::Subscription<sensor_msgs::msg::NavSatFix>::SharedPtr sub_gps_;
   rclcpp::Subscription<antenna_tracker_msgs::msg::TargetGPS>::SharedPtr sub_target_;
+  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr sub_mode_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pub_target_az_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr pub_target_el_;
+
+  uint8_t current_mode_{0};  // 0=AUTO, 1=MANUAL, 2=STANDBY
 
   double ground_lat_{0.0};
   double ground_lon_{0.0};

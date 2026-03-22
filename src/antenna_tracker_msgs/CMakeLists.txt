@@ -16,9 +16,11 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MotorCommand.msg"
   "msg/TargetGPS.msg"
   "msg/TrackerDiagnostics.msg"
+  "msg/Heartbeat.msg"
   "srv/SetMode.srv"
   "srv/SetManualTarget.srv"
   "srv/GetStatus.srv"
+  "srv/SetZeroOffset.srv"
   "action/TrackTarget.action"
   DEPENDENCIES std_msgs
 )

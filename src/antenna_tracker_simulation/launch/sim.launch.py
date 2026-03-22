@@ -1,14 +1,12 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, SetEnvironmentVariable
 from launch.substitutions import LaunchConfiguration, Command
 from launch_ros.actions import Node
 
 def generate_launch_description():
     pkg_sim = get_package_share_directory('antenna_tracker_simulation')
-    gz_sim_pkg = get_package_share_directory('ros_gz_sim')
 
     xacro_file = os.path.join(pkg_sim, 'urdf', 'antenna_tracker.urdf.xacro')
     world_file = os.path.join(pkg_sim, 'worlds', 'antenna_tracker.world')
@@ -17,15 +15,23 @@ def generate_launch_description():
     robot_description = Command(['xacro ', xacro_file])
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
 
+    gz_env = {
+        'DISPLAY': os.environ.get('DISPLAY', ':99'),
+        'LIBGL_ALWAYS_SOFTWARE': '1',
+        'XDG_RUNTIME_DIR': '/tmp/runtime-root',
+    }
+
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
 
-        # Gazebo Fortress Launch
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(gz_sim_pkg, 'launch', 'gz_sim.launch.py')
-            ),
-            launch_arguments={'gz_args': ['-r ', world_file]}.items(),
+        # Force IGN transport to use loopback (avoids multi-interface confusion in host-network Docker)
+        SetEnvironmentVariable('IGN_IP', '127.0.0.1'),
+
+        # Gazebo Fortress Server (headless, server-only)
+        ExecuteProcess(
+            cmd=['ign', 'gazebo', '-s', '-r', world_file],
+            additional_env=gz_env,
+            output='screen'
         ),
 
         # Spawn URDF in Gazebo
@@ -33,7 +39,7 @@ def generate_launch_description():
             package='ros_gz_sim',
             executable='create',
             arguments=['-name', 'antenna_tracker',
-                       '-topic', 'robot_description',
+                       '-string', robot_description,
                        '-z', '0.1'],
             output='screen'
         ),
@@ -43,13 +49,28 @@ def generate_launch_description():
             package='ros_gz_bridge',
             executable='parameter_bridge',
             arguments=[
-                '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
-                '/imu/raw@sensor_msgs/msg/Imu[gz.msgs.IMU',
-                '/gps/fix@sensor_msgs/msg/NavSatFix[gz.msgs.NavSat',
-                '/world/antenna_tracker_world/model/antenna_tracker/joint_state@sensor_msgs/msg/JointState[gz.msgs.Model',
+                # Gazebo → ROS (sensor data)
+                '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
+                '/imu/raw@sensor_msgs/msg/Imu[ignition.msgs.IMU',
+                '/gps/fix@sensor_msgs/msg/NavSatFix[ignition.msgs.NavSat',
+                '/world/antenna_tracker_world/model/antenna_tracker/joint_state@sensor_msgs/msg/JointState[ignition.msgs.Model',
+                # ROS → Gazebo (joint velocity commands)
+                '/model/antenna_tracker/joint/azimuth_joint/cmd_vel@std_msgs/msg/Float64]ignition.msgs.Double',
+                '/model/antenna_tracker/joint/elevation_joint/cmd_vel@std_msgs/msg/Float64]ignition.msgs.Double',
             ],
             remappings=[
                 ('/world/antenna_tracker_world/model/antenna_tracker/joint_state', '/joint_states'),
+            ],
+            output='screen'
+        ),
+
+        # Simulated target GPS publisher - 풍선 출발지 전남 나주 (ascending phase start)
+        ExecuteProcess(
+            cmd=[
+                'ros2', 'topic', 'pub', '--rate', '1',
+                '/antenna/target_gps',
+                'antenna_tracker_msgs/msg/TargetGPS',
+                '{"latitude": 35.0300, "longitude": 126.7100, "altitude_m": 5000.0, "rssi_dbm": -65.0}',
             ],
             output='screen'
         ),

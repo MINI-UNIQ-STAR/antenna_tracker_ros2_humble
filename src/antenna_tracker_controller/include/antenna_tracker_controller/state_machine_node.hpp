@@ -10,6 +10,8 @@
 #include <antenna_tracker_msgs/srv/set_mode.hpp>
 #include <antenna_tracker_msgs/srv/set_manual_target.hpp>
 #include <antenna_tracker_msgs/srv/get_status.hpp>
+#include <antenna_tracker_msgs/srv/set_zero_offset.hpp>
+#include <antenna_tracker_msgs/msg/heartbeat.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_msgs/msg/float64.hpp>
 
@@ -33,6 +35,7 @@ private:
   void fusion_callback(const antenna_tracker_msgs::msg::ImuFusion::SharedPtr msg);
   void encoder_callback(const antenna_tracker_msgs::msg::EncoderFeedback::SharedPtr msg);
   void target_callback(const antenna_tracker_msgs::msg::TargetGPS::SharedPtr msg);
+  void heartbeat_callback(const antenna_tracker_msgs::msg::Heartbeat::SharedPtr msg);
   void diagnostics_timer_callback();
 
   void set_mode_callback(
@@ -44,6 +47,9 @@ private:
   void get_status_callback(
     const std::shared_ptr<antenna_tracker_msgs::srv::GetStatus::Request> request,
     std::shared_ptr<antenna_tracker_msgs::srv::GetStatus::Response> response);
+  void set_zero_offset_callback(
+    const std::shared_ptr<antenna_tracker_msgs::srv::SetZeroOffset::Request> request,
+    std::shared_ptr<antenna_tracker_msgs::srv::SetZeroOffset::Response> response);
 
   static const char * mode_name(OperationMode mode);
 
@@ -51,6 +57,7 @@ private:
   rclcpp::Subscription<antenna_tracker_msgs::msg::ImuFusion>::SharedPtr sub_fusion_;
   rclcpp::Subscription<antenna_tracker_msgs::msg::EncoderFeedback>::SharedPtr sub_encoder_;
   rclcpp::Subscription<antenna_tracker_msgs::msg::TargetGPS>::SharedPtr sub_target_;
+  rclcpp::Subscription<antenna_tracker_msgs::msg::Heartbeat>::SharedPtr sub_heartbeat_;
 
   rclcpp::Publisher<antenna_tracker_msgs::msg::TrackerDiagnostics>::SharedPtr pub_diagnostics_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr pub_mode_;
@@ -60,20 +67,27 @@ private:
   rclcpp::Service<antenna_tracker_msgs::srv::SetMode>::SharedPtr srv_set_mode_;
   rclcpp::Service<antenna_tracker_msgs::srv::SetManualTarget>::SharedPtr srv_manual_target_;
   rclcpp::Service<antenna_tracker_msgs::srv::GetStatus>::SharedPtr srv_get_status_;
+  rclcpp::Service<antenna_tracker_msgs::srv::SetZeroOffset>::SharedPtr srv_set_zero_;
 
   rclcpp::TimerBase::SharedPtr diagnostics_timer_;
 
   OperationMode current_mode_{OperationMode::STANDBY};
   double current_azimuth_{0.0};
   double current_elevation_{0.0};
+  
+  /* Calibration offsets */
+  double az_offset_{0.0};
+  double el_offset_{0.0};
 
   /* Health tracking */
   rclcpp::Time last_imu_time_;
   rclcpp::Time last_encoder_time_;
   rclcpp::Time last_target_time_;
+  rclcpp::Time last_heartbeat_time_;
   uint64_t loop_count_{0};
   rclcpp::Time loop_start_time_;
   bool ground_gps_valid_{false};  /* true once /gps/fix is received */
+  uint8_t fw_status_{0};
 };
 
 }  // namespace antenna_tracker_controller

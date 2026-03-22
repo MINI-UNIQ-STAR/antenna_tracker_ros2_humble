@@ -27,6 +27,10 @@ NavigationNode::NavigationNode(const rclcpp::NodeOptions & options)
     "/antenna/target_gps", rclcpp::SensorDataQoS(),
     std::bind(&NavigationNode::target_callback, this, std::placeholders::_1));
 
+  sub_mode_ = create_subscription<std_msgs::msg::UInt8>(
+    "/antenna/mode", 10,
+    std::bind(&NavigationNode::mode_callback, this, std::placeholders::_1));
+
   pub_target_az_ = create_publisher<std_msgs::msg::Float64>(
     "/antenna/target_azimuth", 10);
   pub_target_el_ = create_publisher<std_msgs::msg::Float64>(
@@ -56,9 +60,18 @@ void NavigationNode::target_callback(const antenna_tracker_msgs::msg::TargetGPS:
   compute_and_publish();
 }
 
+void NavigationNode::mode_callback(const std_msgs::msg::UInt8::SharedPtr msg)
+{
+  current_mode_ = msg->data;
+}
+
 void NavigationNode::compute_and_publish()
 {
   if (!target_valid_) {
+    return;
+  }
+  /* Only publish nav targets in AUTO mode — MANUAL mode uses set_manual_target service */
+  if (current_mode_ != 0) {
     return;
   }
 

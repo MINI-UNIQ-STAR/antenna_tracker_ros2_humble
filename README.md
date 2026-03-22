@@ -13,9 +13,11 @@
 (Target GPS)                   (RPi4B HAT)                  ROS 2 Humble
                                                               ├── sensor_fusion_node
 [STM32H7 Nucleo] ─USB CDC─▶   micro_ros_agent               ├── navigation_node
-  BNO055 (I2C)                  /imu/raw                     ├── controller_node (NMPC 100Hz)
-  AS5600 (I2C)                  /antenna/encoder_feedback    ├── state_machine_node
-  TB6600 Stepper                /antenna/motor_cmd ◀──       └── can_bridge_node
+  BMI270 (I2C1)                 /imu/raw                     ├── controller_node (NMPC 100Hz)
+  MLX90393 (I2C1)               /magnetic_field              ├── state_machine_node
+  XA1110 (UART)                 /gps/fix                     └── can_bridge_node
+  AS5600 (I2C1/2)               /antenna/encoder_feedback    
+  TB6600 Stepper                /antenna/motor_cmd ◀──       
 
 [Browser] ─── rosbridge :9090 ──▶ GCS 웹 대시보드 (:8080)
 [Gazebo Fortress] ─── ros_gz_bridge ──▶ 시뮬레이션
@@ -28,8 +30,10 @@
 | 구성요소 | 모델 | 인터페이스 |
 |---------|------|-----------|
 | MCU | STM32H7A3ZI-Q Nucleo | micro-ROS USB CDC (`/dev/ttyACM0`) |
-| IMU | BNO055 | I2C1 |
-| 인코더 | AS5600 x2 | I2C1 (Az: 0x36, El: 별도 버스) |
+| IMU | BMI270 | I2C1 (0x68) |
+| 지자기계 | MLX90393 | I2C1 (0x18) |
+| GPS | XA1110 | UART (gps_uart alias) |
+| 인코더 | AS5600 x2 | Dual-Bus I2C (Az: I2C1, El: I2C2) |
 | 모터 드라이버 | TB6600 x2 | STEP/DIR/EN GPIO (10kHz k_timer) |
 | CAN 컨트롤러 | **MCP2515** (SPI-CAN HAT) | SPI0, INT→GPIO25 |
 | LoRa 모듈 | ESP32 LoRa | CAN 2.0B 500kbps |
@@ -116,6 +120,8 @@ west flash
 | 토픽 | 타입 | 주기 |
 |------|------|------|
 | `/imu/raw` | sensor_msgs/Imu | 100Hz |
+| `/magnetic_field` | sensor_msgs/MagneticField | 100Hz |
+| `/gps/fix` | sensor_msgs/NavSatFix | 1Hz |
 | `/antenna/encoder_feedback` | EncoderFeedback | 100Hz |
 | `/antenna/motor_cmd` | MotorCommand | 100Hz |
 | `/antenna/state` | AntennaState | 10Hz |

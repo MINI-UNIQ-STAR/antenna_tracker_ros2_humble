@@ -1,4 +1,9 @@
 / {
+    aliases {
+        /* XA1110 GPS UART → USART1 (PA9=TX, PA10=RX, CN7) */
+        gps-uart = &usart1;
+    };
+
     zephyr,user {
         microros_serial_uart = &usart3;
     };
@@ -43,4 +48,27 @@
         compatible = "i2c-device";
         reg = <0x28>;
     };
+};
+
+/* I2C2: AS5600 Elevation (PB10=SCL, PB11=SDA, CN10)
+ * AS5600 주소는 0x36 고정 → I2C1(Azimuth)과 충돌 방지를 위해 별도 버스 사용
+ */
+&i2c2 {
+    status = "okay";
+    pinctrl-0 = <&i2c2_scl_pb10 &i2c2_sda_pb11>;
+    pinctrl-names = "default";
+    clock-frequency = <I2C_BITRATE_FAST>;
+
+    as5600_el: as5600@36 {
+        compatible = "i2c-device";
+        reg = <0x36>;
+    };
+};
+
+/* USART1: XA1110 GPS (PA9=TX, PA10=RX, CN7) 9600 baud */
+&usart1 {
+    status = "okay";
+    pinctrl-0 = <&usart1_tx_pa9 &usart1_rx_pa10>;
+    pinctrl-names = "default";
+    current-speed = <9600>;
 };

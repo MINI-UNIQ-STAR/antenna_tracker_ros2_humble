@@ -151,24 +151,24 @@
 
   <!-- Gazebo Plugins (Fortress) -->
   <gazebo>
-    <plugin filename="gz-sim-joint-state-publisher-system" name="gz::sim::systems::JointStatePublisher">
+    <plugin filename="ignition-gazebo-joint-state-publisher-system" name="ignition::gazebo::systems::JointStatePublisher">
       <joint_name>azimuth_joint</joint_name>
       <joint_name>elevation_joint</joint_name>
     </plugin>
 
-    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+    <plugin filename="ignition-gazebo-joint-controller-system" name="ignition::gazebo::systems::JointController">
       <joint_name>azimuth_joint</joint_name>
       <topic>/model/antenna_tracker/joint/azimuth_joint/cmd_vel</topic>
     </plugin>
 
-    <plugin filename="gz-sim-joint-controller-system" name="gz::sim::systems::JointController">
+    <plugin filename="ignition-gazebo-joint-controller-system" name="ignition::gazebo::systems::JointController">
       <joint_name>elevation_joint</joint_name>
       <topic>/model/antenna_tracker/joint/elevation_joint/cmd_vel</topic>
     </plugin>
 
     <!-- Sensor systems -->
-    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
-    <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat"/>
+    <plugin filename="ignition-gazebo-imu-system" name="ignition::gazebo::systems::Imu"/>
+    <plugin filename="ignition-gazebo-navsat-system" name="ignition::gazebo::systems::NavSat"/>
   </gazebo>
 
   <gazebo reference="imu_link">

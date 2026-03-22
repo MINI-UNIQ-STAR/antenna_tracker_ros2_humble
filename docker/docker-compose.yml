@@ -6,8 +6,11 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: antenna_tracker_dev
+    environment:
+      - DISPLAY=${DISPLAY}
     volumes:
-      - ../:/ros2_ws/src/antenna_tracker_ros
+      - ../:/ros2_ws
+      - /tmp/.X11-unix:/tmp/.X11-unix
     network_mode: host
     tty: true
     stdin_open: true

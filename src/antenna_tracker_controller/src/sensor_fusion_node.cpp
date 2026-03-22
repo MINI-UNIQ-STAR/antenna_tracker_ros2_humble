@@ -32,6 +32,15 @@ SensorFusionNode::SensorFusionNode(const rclcpp::NodeOptions & options)
     "/magnetic_field", rclcpp::SensorDataQoS(),
     std::bind(&SensorFusionNode::mag_callback, this, std::placeholders::_1));
 
+  sub_gps_ = create_subscription<sensor_msgs::msg::NavSatFix>(
+    "/gps/fix", 10,
+    std::bind(&SensorFusionNode::gps_callback, this, std::placeholders::_1));
+
+  // Subscribe to encoder feedback — used as primary azimuth/elevation in simulation
+  sub_encoder_ = create_subscription<antenna_tracker_msgs::msg::EncoderFeedback>(
+    "/antenna/encoder_feedback", rclcpp::SensorDataQoS(),
+    std::bind(&SensorFusionNode::encoder_callback, this, std::placeholders::_1));
+
   pub_fusion_ = create_publisher<antenna_tracker_msgs::msg::ImuFusion>(
     "/antenna/imu_fusion", rclcpp::SensorDataQoS());
 
@@ -54,6 +63,37 @@ void SensorFusionNode::mag_callback(const sensor_msgs::msg::MagneticField::Share
 {
   latest_mag_ = msg;
   mag_received_ = true;
+}
+
+void SensorFusionNode::encoder_callback(const antenna_tracker_msgs::msg::EncoderFeedback::SharedPtr msg)
+{
+  if (msg->az_valid) {
+    encoder_az_deg_ = msg->az_angle_deg;
+  }
+  if (msg->el_valid) {
+    encoder_el_deg_ = msg->el_angle_deg;
+  }
+  encoder_received_ = msg->az_valid || msg->el_valid;
+}
+
+void SensorFusionNode::gps_callback(const sensor_msgs::msg::NavSatFix::SharedPtr msg)
+{
+  if (msg->status.status < 0) return; /* No fix */
+
+  /* 
+   * Simple Magnetic Declination Approximation (Example: South Korea is ~-8.5deg)
+   * Real implementation should use WMM (World Magnetic Model)
+   */
+  double lat = msg->latitude;
+  double lon = msg->longitude;
+  
+  /* Fallback: user-defined or simple lookup */
+  double decl = get_parameter("mag_declination_deg").as_double();
+  
+  /* Log update if significant change? */
+  comp_filter_.set_declination(decl);
+  
+  RCLCPP_DEBUG(get_logger(), "GPS Fix: Lat=%.4f, Lon=%.4f -> Declination adjusted", lat, lon);
 }
 
 
@@ -83,8 +123,15 @@ void SensorFusionNode::timer_callback()
   double azimuth_deg   = yaw_deg;
   double elevation_deg = -pitch_deg;  /* flip: nose-up = positive elevation */
 
+  /* Encoder feedback overrides IMU yaw when valid (critical for simulation where
+   * Gazebo IMU reports identity quaternion → yaw=0° in headless Docker) */
+  if (encoder_received_) {
+    azimuth_deg   = encoder_az_deg_;
+    elevation_deg = encoder_el_deg_;
+  }
+
   /* Optional: blend with compass via complementary filter if mag is available */
-  if (mag_received_) {
+  if (mag_received_ && !encoder_received_) {
     double timestamp = latest_imu_->header.stamp.sec +
                        latest_imu_->header.stamp.nanosec * 1e-9;
     double gyro_x = latest_imu_->angular_velocity.x * 57.29577951;

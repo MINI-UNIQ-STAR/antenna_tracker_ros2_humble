@@ -8,7 +8,7 @@ StateMachineNode::StateMachineNode(const rclcpp::NodeOptions & options)
 : Node("state_machine_node", options)
 {
   declare_parameter<double>("imu_timeout_sec", 1.0);
-  declare_parameter<double>("lora_timeout_sec", 5.0);
+  declare_parameter<double>("lora_timeout_sec", 12.0);
   declare_parameter<double>("diagnostics_rate_hz", 1.0);
 
   sub_state_ = create_subscription<antenna_tracker_msgs::msg::AntennaState>(
@@ -26,6 +26,10 @@ StateMachineNode::StateMachineNode(const rclcpp::NodeOptions & options)
   sub_target_ = create_subscription<antenna_tracker_msgs::msg::TargetGPS>(
     "/antenna/target_gps", rclcpp::SensorDataQoS(),
     std::bind(&StateMachineNode::target_callback, this, std::placeholders::_1));
+
+  sub_heartbeat_ = create_subscription<antenna_tracker_msgs::msg::Heartbeat>(
+    "/antenna/heartbeat", 10,
+    std::bind(&StateMachineNode::heartbeat_callback, this, std::placeholders::_1));
 
   pub_diagnostics_ = create_publisher<antenna_tracker_msgs::msg::TrackerDiagnostics>(
     "/antenna/diagnostics", 10);
@@ -52,6 +56,11 @@ StateMachineNode::StateMachineNode(const rclcpp::NodeOptions & options)
     std::bind(&StateMachineNode::get_status_callback, this,
               std::placeholders::_1, std::placeholders::_2));
 
+  srv_set_zero_ = create_service<antenna_tracker_msgs::srv::SetZeroOffset>(
+    "/antenna/set_zero",
+    std::bind(&StateMachineNode::set_zero_offset_callback, this,
+              std::placeholders::_1, std::placeholders::_2));
+
   double diag_rate = get_parameter("diagnostics_rate_hz").as_double();
   auto period = std::chrono::duration<double>(1.0 / diag_rate);
   diagnostics_timer_ = create_wall_timer(
@@ -61,6 +70,7 @@ StateMachineNode::StateMachineNode(const rclcpp::NodeOptions & options)
   last_imu_time_ = now();
   last_encoder_time_ = now();
   last_target_time_ = now();
+  last_heartbeat_time_ = now();
   loop_start_time_ = now();
 
   RCLCPP_INFO(get_logger(), "StateMachineNode initialized (mode: STANDBY)");
@@ -92,6 +102,13 @@ void StateMachineNode::target_callback(
   last_target_time_ = now();
 }
 
+void StateMachineNode::heartbeat_callback(
+  const antenna_tracker_msgs::msg::Heartbeat::SharedPtr msg)
+{
+  last_heartbeat_time_ = now();
+  fw_status_ = msg->status;
+}
+
 void StateMachineNode::diagnostics_timer_callback()
 {
   auto diag = antenna_tracker_msgs::msg::TrackerDiagnostics();
@@ -103,13 +120,14 @@ void StateMachineNode::diagnostics_timer_callback()
   double imu_age = (now() - last_imu_time_).seconds();
   double encoder_age = (now() - last_encoder_time_).seconds();
   double target_age = (now() - last_target_time_).seconds();
+  double hb_age = (now() - last_heartbeat_time_).seconds();
 
   diag.imu_ok = (imu_age < imu_timeout);
   diag.mag_ok = diag.imu_ok;  /* BNO055 mag comes with IMU data */
   diag.encoder_ok = (encoder_age < imu_timeout);
   diag.can_ok = (target_age < lora_timeout);
   /* ── FIX: gps_ok reflects actual ground GPS reception state ── */
-  diag.gps_ok = ground_gps_valid_;
+  diag.gps_ok = ground_gps_valid_ && (hb_age < 2.0); /* Assume GS GPS comes via heartbeat/micro-ROS */
 
   /* CPU temperature (RPi4B thermal zone) */
   std::ifstream temp_file("/sys/class/thermal/thermal_zone0/temp");
@@ -208,6 +226,27 @@ void StateMachineNode::set_manual_target_callback(
 
   response->success = true;
   response->message = "Manual target set";
+}
+
+void StateMachineNode::set_zero_offset_callback(
+  const std::shared_ptr<antenna_tracker_msgs::srv::SetZeroOffset::Request>,
+  std::shared_ptr<antenna_tracker_msgs::srv::SetZeroOffset::Response> response)
+{
+  if (current_mode_ != OperationMode::STANDBY) {
+    response->success = false;
+    response->message = "Must be in STANDBY mode to calibrate";
+    return;
+  }
+
+  /* Record current positions as offsets */
+  az_offset_ = current_azimuth_;
+  el_offset_ = current_elevation_;
+
+  RCLCPP_INFO(get_logger(), "Calibration: New Zero Offset Az=%.2f, El=%.2f",
+              az_offset_, el_offset_);
+  
+  response->success = true;
+  response->message = "Zero offset recorded successfully";
 }
 
 void StateMachineNode::get_status_callback(

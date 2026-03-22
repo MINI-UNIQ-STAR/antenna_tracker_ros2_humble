@@ -30,8 +30,4 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
-install(DIRECTORY micro_ros_firmware/
-  DESTINATION share/${PROJECT_NAME}/micro_ros_firmware
-)
-
 ament_package()

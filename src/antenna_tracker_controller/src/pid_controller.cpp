@@ -84,15 +84,15 @@ void DualAxisCascadePid::init(double dt)
 {
   dt_ = dt;
 
-  /* Azimuth: from config.h */
-  PidGains az_outer{15.0, 0.1, 0.3};
-  PidGains az_inner{4.0, 0.05, 0.1};
-  azimuth_.init(az_outer, az_inner, dt, -1000.0, 1000.0);
+  /* Azimuth — tuned for open-loop stepper integration model */
+  PidGains az_outer{5.0, 0.0, 0.1};
+  PidGains az_inner{1.5, 0.01, 0.05};
+  azimuth_.init(az_outer, az_inner, dt, -800.0, 800.0);
 
-  /* Elevation: from config.h (higher Ki for gravity compensation) */
-  PidGains el_outer{8.0, 1.0, 0.2};
-  PidGains el_inner{5.0, 0.15, 0.08};
-  elevation_.init(el_outer, el_inner, dt, -1000.0, 1000.0);
+  /* Elevation — lower gains, no integral windup at limits */
+  PidGains el_outer{3.0, 0.0, 0.1};
+  PidGains el_inner{2.0, 0.01, 0.02};
+  elevation_.init(el_outer, el_inner, dt, -800.0, 800.0);
 }
 
 void DualAxisCascadePid::compute(
@@ -102,11 +102,6 @@ void DualAxisCascadePid::compute(
 {
   az_output = azimuth_.compute(az_target, az_current, az_vel);
   el_output = elevation_.compute(el_target, el_current, el_vel);
-
-  /* Gravity compensation for elevation */
-  double gravity_comp = 50.0 * std::cos(el_current * M_PI / 180.0);
-  el_output += gravity_comp;
-  el_output = std::max(-1000.0, std::min(1000.0, el_output));
 }
 
 void DualAxisCascadePid::reset()

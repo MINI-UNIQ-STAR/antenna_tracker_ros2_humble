@@ -1,5 +1,18 @@
 FROM osrf/ros:humble-desktop
 
+# Add OSRF Gazebo apt repository (required for ignition-fortress)
+RUN curl https://packages.osrfoundation.org/gazebo.gpg \
+      --output /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] \
+      http://packages.osrfoundation.org/gazebo/ubuntu-stable jammy main" \
+      > /etc/apt/sources.list.d/gazebo-stable.list
+
+# Install Gazebo Fortress (ignition 6) — matches libignition-gazebo6 used by ros-humble-ros-gz-*
+RUN apt-get update && apt-get install -y \
+    ignition-fortress \
+    xvfb \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install additional dependencies
 RUN apt-get update && apt-get install -y \
     ros-humble-rmw-cyclonedds-cpp \
@@ -9,6 +22,9 @@ RUN apt-get update && apt-get install -y \
     ros-humble-xacro \
     ros-humble-rviz2 \
     ros-humble-rclcpp-action \
+    ros-humble-ros-gz-sim \
+    ros-humble-ros-gz-bridge \
+    ros-humble-ros-gz-interfaces \
     python3-colcon-common-extensions \
     python3-rosdep \
     python3-pip \

@@ -55,24 +55,49 @@ void MpcController::compute(
   ocp_nlp_constraints_model_set(nlp_config, nlp_dims, nlp_in, nlp_out, 0, "ubx", x0);
 
   // Set reference
+  double az_target_rad = az_target * M_PI / 180.0;
+  double el_target_rad = el_target * M_PI / 180.0;
   double yref[ANTENNA_TRACKER_NY] = {0};
-  yref[0] = az_target * M_PI / 180.0;
+  yref[0] = az_target_rad;
   yref[1] = 0.0;
-  yref[2] = el_target * M_PI / 180.0;
+  yref[2] = el_target_rad;
   yref[3] = 0.0;
-  yref[4] = 0.0; // u_az ref
-  yref[5] = 0.0; // u_el ref
+  yref[4] = 0.0;                              // u_az ref
+  yref[5] = 50.0 * std::cos(el_target_rad);  // u_el ref = gravity equilibrium at target
 
   double yref_e[ANTENNA_TRACKER_NYN] = {0};
-  yref_e[0] = az_target * M_PI / 180.0;
+  yref_e[0] = az_target_rad;
   yref_e[1] = 0.0;
-  yref_e[2] = el_target * M_PI / 180.0;
+  yref_e[2] = el_target_rad;
   yref_e[3] = 0.0;
 
   for (int i = 0; i < ANTENNA_TRACKER_N; ++i) {
     ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, i, "yref", yref);
   }
   ocp_nlp_cost_model_set(nlp_config, nlp_dims, nlp_in, ANTENNA_TRACKER_N, "yref", yref_e);
+
+  /* ── Warm-start: linear trajectory from current state to target ──
+   * Flat warm-start (all stages = current) causes RTI to linearize at wrong
+   * operating point and produces near-zero correction. Linear interpolation
+   * gives RTI a sensible trajectory to refine. */
+  for (int i = 0; i <= ANTENNA_TRACKER_N; ++i) {
+    double alpha = static_cast<double>(i) / ANTENNA_TRACKER_N;
+    double x_ws[ANTENNA_TRACKER_NX] = {
+      x0[0] + alpha * (az_target_rad - x0[0]),  /* az: current → target */
+      0.0,                                        /* az_vel: 0 */
+      x0[2] + alpha * (el_target_rad - x0[2]),  /* el: current → target */
+      0.0                                         /* el_vel: 0 */
+    };
+    ocp_nlp_out_set(nlp_config, nlp_dims, nlp_out, nlp_in, i, "x", x_ws);
+    if (i < ANTENNA_TRACKER_N) {
+      double el_interp = x_ws[2];
+      double u_ws[ANTENNA_TRACKER_NU] = {
+        0.0,
+        50.0 * std::cos(el_interp)  /* gravity equilibrium along interpolated path */
+      };
+      ocp_nlp_out_set(nlp_config, nlp_dims, nlp_out, nlp_in, i, "u", u_ws);
+    }
+  }
 
   int status = antenna_tracker_acados_solve(acados_capsule_);
   if (status != 0) {

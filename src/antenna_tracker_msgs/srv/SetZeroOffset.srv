@@ -1,0 +1,4 @@
+# Set current encoder positions as the Zero/Home reference
+---
+bool success
+string message
