@@ -1,0 +1,80 @@
+/*
+ * TTGO LoRa 32 V2.1 — Zephyr Device Tree Overlay
+ *
+ * LoRa SX1276 (HSPI / SPI2):
+ *   SCK  → GPIO5
+ *   MISO → GPIO19
+ *   MOSI → GPIO27
+ *   CS   → GPIO18
+ *   RST  → GPIO14
+ *   DIO0 → GPIO26
+ *
+ * ESP32 TWAI (internal CAN controller):
+ *   TX → GPIO32  (external CAN transceiver, e.g. SN65HVD230)
+ *   RX → GPIO33
+ *
+ * ⚠ 120Ω 종단 저항 CAN 버스 양단 필수
+ */
+
+/ {
+    chosen {
+        zephyr,canbus = &twai;
+    };
+};
+
+/* ── pinctrl definitions ─────────────────────────────────────────────────── */
+&pinctrl {
+    /* SPI2 (HSPI) — LoRa SX1276 */
+    spim2_mosi_gpio27: spim2_mosi_gpio27 {
+        pinmux = <SPIM2_MOSI_GPIO27>;
+    };
+    spim2_miso_gpio19: spim2_miso_gpio19 {
+        pinmux = <SPIM2_MISO_GPIO19>;
+    };
+    spim2_sclk_gpio5: spim2_sclk_gpio5 {
+        pinmux = <SPIM2_SCLK_GPIO5>;
+    };
+    spim2_csel_gpio18: spim2_csel_gpio18 {
+        pinmux = <SPIM2_CSEL_GPIO18>;
+    };
+
+    /* TWAI — CAN 2.0B */
+    twai_tx_gpio32: twai_tx_gpio32 {
+        pinmux = <TWAI_TX_GPIO32>;
+    };
+    twai_rx_gpio33: twai_rx_gpio33 {
+        pinmux = <TWAI_RX_GPIO33>;
+    };
+};
+
+/* ── SPI2 (HSPI): LoRa SX1276 ───────────────────────────────────────────── */
+&spi2 {
+    status = "okay";
+    pinctrl-0 = <&spim2_mosi_gpio27 &spim2_miso_gpio19
+                 &spim2_sclk_gpio5  &spim2_csel_gpio18>;
+    pinctrl-names = "default";
+    cs-gpios = <&gpio0 18 GPIO_ACTIVE_LOW>;
+
+    lora0: sx1276@0 {
+        compatible = "semtech,sx1276";
+        reg = <0>;
+        spi-max-frequency = <1000000>;
+
+        /* RST: GPIO14 (active-low) */
+        reset-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
+
+        /* DIO0: GPIO26 (packet done / RX done interrupt) */
+        dio-gpios = <&gpio0 26 (GPIO_PULL_DOWN | GPIO_ACTIVE_HIGH)>;
+
+        /* PA_BOOST 출력 (최대 +17dBm) */
+        power-amplifier-output = "pa-boost";
+    };
+};
+
+/* ── TWAI: CAN 2.0B 500kbps ─────────────────────────────────────────────── */
+&twai {
+    status = "okay";
+    pinctrl-0 = <&twai_tx_gpio32 &twai_rx_gpio33>;
+    pinctrl-names = "default";
+    bus-speed = <500000>;
+};
