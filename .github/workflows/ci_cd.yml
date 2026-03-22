@@ -67,29 +67,30 @@ jobs:
               BRIDGE_PID=\$!
               sleep 2
 
-              # Encoder frame 0x204: az=288.0° (2880=0x0B40), el=90.0° (900=0x0384), flags=0x03
+              # topic echo 리스너를 먼저 백그라운드로 시작 (subscribe 완료 후 CAN 전송)
+              timeout 10 ros2 topic echo /antenna/encoder_feedback --once > /tmp/enc.txt &
+              timeout 10 ros2 topic echo /imu/raw --once > /tmp/imu.txt &
+              timeout 10 ros2 topic echo /magnetic_field --once > /tmp/mag.txt &
+              sleep 2  # 리스너 subscribe 대기
+
+              # CAN 프레임 전송
               cansend vcan0 204#0B40038403
-
-              # IMU accel frame 0x200: ax=1000, ay=0, az=0 (int16 BE × 1000)
               cansend vcan0 200#03E8000000000000
-
-              # IMU gyro frame 0x201: gx=100, gy=0, gz=0 (int16 BE × 1000)
               cansend vcan0 201#006400000000
-
-              # Mag frame 0x202: mx=1000, my=0, mz=0 (int16 BE × 100)
               cansend vcan0 202#03E8000000000000
 
-              sleep 1
+              # 리스너 수신 대기 (최대 8초)
+              sleep 8
 
-              # Verify topics published
-              timeout 5 ros2 topic echo /antenna/encoder_feedback --once | grep -q 'az_angle_deg' \
-                && echo '[PASS] encoder_feedback' || (echo '[FAIL] encoder_feedback' && exit 1)
+              # 결과 확인
+              grep -q 'az_angle_deg' /tmp/enc.txt \
+                && echo '[PASS] encoder_feedback' || (echo '[FAIL] encoder_feedback' && cat /tmp/enc.txt && exit 1)
 
-              timeout 5 ros2 topic echo /imu/raw --once | grep -q 'linear_acceleration' \
-                && echo '[PASS] imu/raw' || (echo '[FAIL] imu/raw' && exit 1)
+              grep -q 'linear_acceleration' /tmp/imu.txt \
+                && echo '[PASS] imu/raw' || (echo '[FAIL] imu/raw' && cat /tmp/imu.txt && exit 1)
 
-              timeout 5 ros2 topic echo /magnetic_field --once | grep -q 'magnetic_field' \
-                && echo '[PASS] magnetic_field' || (echo '[FAIL] magnetic_field' && exit 1)
+              grep -q 'magnetic_field' /tmp/mag.txt \
+                && echo '[PASS] magnetic_field' || (echo '[FAIL] magnetic_field' && cat /tmp/mag.txt && exit 1)
 
               kill \$BRIDGE_PID 2>/dev/null || true
               echo 'CAN bridge integration test PASSED'
