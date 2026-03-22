@@ -12,6 +12,7 @@ services:
       - ../:/ros2_ws
       - /tmp/.X11-unix:/tmp/.X11-unix
     network_mode: host
+    privileged: true          # vcan/CAN 소켓 접근에 필요
     tty: true
     stdin_open: true
     command: /bin/bash

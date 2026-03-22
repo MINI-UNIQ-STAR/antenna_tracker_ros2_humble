@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     nano \
     locales \
+    can-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Install acados
@@ -59,8 +60,9 @@ ENV LANG=en_US.UTF-8
 RUN if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then rosdep init; fi
 RUN rosdep update
 
-# Set DDS middleware
+# Set DDS middleware (CycloneDDS, loopback only for container use)
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+ENV CYCLONEDDS_URI="<CycloneDDS><Domain><General><NetworkInterfaceAddress>lo</NetworkInterfaceAddress></General></Domain></CycloneDDS>"
 
 # Create workspace directory
 WORKDIR /ros2_ws

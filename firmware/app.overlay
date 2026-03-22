@@ -4,8 +4,9 @@
         gps-uart = &usart1;
     };
 
-    zephyr,user {
-        microros_serial_uart = &usart3;
+    chosen {
+        /* Single CAN bus: STM32H7 FDCAN1 (PD0=RX, PD1=TX) */
+        zephyr,canbus = &fdcan1;
     };
 
     stepper_motors {
@@ -71,4 +72,18 @@
     pinctrl-0 = <&usart1_tx_pa9 &usart1_rx_pa10>;
     pinctrl-names = "default";
     current-speed = <9600>;
+};
+
+/*
+ * FDCAN1 in Classic CAN 2.0B mode (500kbps)
+ * — no bus-speed-data / no FD frame flags → compatible with ESP32 TWAI & MCP2515
+ * — verify PD0/PD1 pin availability on your specific Nucleo board
+ */
+&fdcan1 {
+    status = "okay";
+    pinctrl-0 = <&fdcan1_rx_pd0 &fdcan1_tx_pd1>;
+    pinctrl-names = "default";
+    bus-speed = <500000>;
+    sample-point = <875>;
+    /* bus-speed-data intentionally omitted: Classic CAN 2.0B only */
 };
