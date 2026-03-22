@@ -290,6 +290,113 @@ west flash --esp-device /dev/ttyUSB0
 
 ---
 
+## 펌웨어 이식 가이드 (STM32H7 → 다른 보드)
+
+`firmware/src/main.c`는 Zephyr DT API를 사용하므로 **로직 수정 없이** 아래 파일만 수정하면 됩니다.
+
+### 공통 수정 항목
+
+| 항목 | 기존 (STM32H7 Nucleo) | 변경 방법 |
+|------|----------------------|----------|
+| 빌드 커맨드 | `west build -b nucleo_h7a3zi_q` | `-b <새 보드명>` |
+| `app.overlay` CAN 노드 | `&fdcan1` | 보드별 CAN 노드명으로 |
+| `app.overlay` GPIO/I2C/UART 핀 | PD0, PB8 등 STM32 핀 | 새 보드 핀으로 재매핑 |
+
+---
+
+### ESP32-C6 로 이식
+
+> Zephyr 3.5+ 지원 / RISC-V 기반 / TWAI(CAN 2.0B) 내장
+
+**1. 빌드**
+```bash
+west build -b esp32c6_devkitc/esp32c6
+west flash --esp-device /dev/ttyUSB0
+```
+
+**2. `app.overlay` 핵심 변경**
+
+```dts
+/* CAN: FDCAN1 → TWAI (ESP32-C6 내장) */
+chosen {
+    zephyr,canbus = &twai;
+};
+
+&twai {
+    status = "okay";
+    pinctrl-0 = <&twai_tx_gpioXX &twai_rx_gpioXX>;  /* 실제 연결 핀으로 */
+    pinctrl-names = "default";
+    bus-speed = <500000>;
+};
+
+/* I2C, UART, GPIO 핀 번호를 ESP32-C6 GPIO 번호로 재매핑 */
+&i2c0 {
+    pinctrl-0 = <&i2c0_sda_gpioXX &i2c0_scl_gpioXX>;
+    ...
+};
+```
+
+**3. `prj.conf`** — 변경 없음 (`CONFIG_CAN=y` 그대로 사용)
+
+---
+
+### Arduino UNO R4 Minima 로 이식
+
+> Renesas RA4M1 (ARM Cortex-M4) / CAN0 내장 / Zephyr 3.5+ 지원
+
+**1. 빌드**
+```bash
+west build -b arduino_uno_r4_minima
+west flash   # OpenOCD or J-Link
+```
+
+**2. `app.overlay` 핵심 변경**
+
+```dts
+/* CAN: FDCAN1 → RA4M1 CAN0 */
+chosen {
+    zephyr,canbus = &can0;
+};
+
+&can0 {
+    status = "okay";
+    pinctrl-0 = <&can0_tx_p103 &can0_rx_p102>;  /* RA4M1 기본 CAN 핀 */
+    pinctrl-names = "default";
+    bus-speed = <500000>;
+};
+
+/* I2C: Arduino 표준 SDA(A4)/SCL(A5) */
+&i2c1 {
+    pinctrl-0 = <&i2c1_sda_p407 &i2c1_scl_p408>;
+    ...
+};
+
+/* UART: Arduino D0(RX)/D1(TX) */
+&uart2 {
+    pinctrl-0 = <&uart2_rx_p301 &uart2_tx_p302>;
+    current-speed = <9600>;
+    ...
+};
+```
+
+**3. `prj.conf`** — 변경 없음
+
+> ⚠️ Arduino UNO R4는 I/O 전압이 3.3V입니다. TB6600 스테퍼 드라이버 입력이 5V 톨러런트인지 확인하세요.
+> ⚠️ 정확한 핀 번호는 [RA4M1 데이터시트](https://www.renesas.com/us/en/products/microcontrollers-microprocessors/ra-cortex-m-mcus/ra4m1-32-bit-microcontrollers-48mhz-arm-cortex-m4) 및 보드 회로도를 반드시 대조하세요.
+
+---
+
+### 이식 체크리스트
+
+- [ ] `west build -b <보드명>` 성공
+- [ ] CAN 노드명 (`&fdcan1` / `&twai` / `&can0`) 확인
+- [ ] I2C1/I2C2 핀 재매핑 (BMI270@0x68, MLX90393@0x0C, AS5600×2@0x36)
+- [ ] UART 핀 재매핑 (GPS XA1110, 9600 baud)
+- [ ] 스테퍼 GPIO 6핀 재매핑 (STEP/DIR/EN × 2축)
+- [ ] `candump` 또는 vcan SITL로 CAN 통신 확인
+
+---
+
 ## SITL (Software In The Loop) — vcan + Docker
 
 하드웨어 없이 PC에서 전체 소프트웨어 스택을 검증하는 방법입니다.
