@@ -103,55 +103,40 @@ void SensorFusionNode::timer_callback()
     return;  /* Wait for first IMU sample */
   }
 
-  /* ── FIX: BNO055 emits absolute orientation in /imu/raw quaternion.
-   *  Use it directly so fusion works without a separate /magnetic_field topic. ── */
-  const auto & q = latest_imu_->orientation;
+  /* BMI270 outputs raw accel + gyro only (no orientation quaternion).
+   * Always run complementary filter to compute roll/pitch/yaw.
+   * If MLX90393 mag is not yet available, heading is gyro-integrated only. */
+  double timestamp = latest_imu_->header.stamp.sec +
+                     latest_imu_->header.stamp.nanosec * 1e-9;
 
-  /* Quaternion → roll/pitch/yaw(azimuth) in degrees */
-  double sinr_cosp = 2.0 * (q.w * q.x + q.y * q.z);
-  double cosr_cosp = 1.0 - 2.0 * (q.x * q.x + q.y * q.y);
-  double roll_deg  = std::atan2(sinr_cosp, cosr_cosp) * 57.29577951;
+  double mag_x = 0.0, mag_y = 0.0, mag_z = 0.0;
+  if (mag_received_) {
+    mag_x = latest_mag_->magnetic_field.x * 1e6;  /* T → µT */
+    mag_y = latest_mag_->magnetic_field.y * 1e6;
+    mag_z = latest_mag_->magnetic_field.z * 1e6;
+  }
 
-  double sinp      = 2.0 * (q.w * q.y - q.z * q.x);
-  double pitch_deg = std::asin(std::clamp(sinp, -1.0, 1.0)) * 57.29577951;
+  comp_filter_.update(
+    latest_imu_->linear_acceleration.x,
+    latest_imu_->linear_acceleration.y,
+    latest_imu_->linear_acceleration.z,
+    latest_imu_->angular_velocity.x * 57.29577951,
+    latest_imu_->angular_velocity.y * 57.29577951,
+    latest_imu_->angular_velocity.z * 57.29577951,
+    mag_x, mag_y, mag_z,
+    timestamp);
 
-  double siny_cosp = 2.0 * (q.w * q.z + q.x * q.y);
-  double cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z);
-  double yaw_deg   = std::atan2(siny_cosp, cosy_cosp) * 57.29577951;
-  if (yaw_deg < 0.0) yaw_deg += 360.0;
+  const auto & orient = comp_filter_.orientation();
+  double roll_deg      = orient.roll;
+  double pitch_deg     = orient.pitch;
+  double yaw_deg       = orient.yaw;
+  double azimuth_deg   = orient.azimuth;
+  double elevation_deg = orient.elevation;
 
-  double azimuth_deg   = yaw_deg;
-  double elevation_deg = -pitch_deg;  /* flip: nose-up = positive elevation */
-
-  /* Encoder feedback overrides IMU yaw when valid (critical for simulation where
-   * Gazebo IMU reports identity quaternion → yaw=0° in headless Docker) */
+  /* Encoder overrides azimuth/elevation when valid */
   if (encoder_received_) {
     azimuth_deg   = encoder_az_deg_;
     elevation_deg = encoder_el_deg_;
-  }
-
-  /* Optional: blend with compass via complementary filter if mag is available */
-  if (mag_received_ && !encoder_received_) {
-    double timestamp = latest_imu_->header.stamp.sec +
-                       latest_imu_->header.stamp.nanosec * 1e-9;
-    double gyro_x = latest_imu_->angular_velocity.x * 57.29577951;
-    double gyro_y = latest_imu_->angular_velocity.y * 57.29577951;
-    double gyro_z = latest_imu_->angular_velocity.z * 57.29577951;
-    double mag_x  = latest_mag_->magnetic_field.x * 1e6;
-    double mag_y  = latest_mag_->magnetic_field.y * 1e6;
-    double mag_z  = latest_mag_->magnetic_field.z * 1e6;
-
-    comp_filter_.update(
-      latest_imu_->linear_acceleration.x,
-      latest_imu_->linear_acceleration.y,
-      latest_imu_->linear_acceleration.z,
-      gyro_x, gyro_y, gyro_z,
-      mag_x, mag_y, mag_z,
-      timestamp);
-
-    const auto & orient = comp_filter_.orientation();
-    azimuth_deg   = orient.azimuth;   /* compass-corrected */
-    elevation_deg = orient.elevation;
   }
 
   kalman_filter_.update(azimuth_deg, elevation_deg);
