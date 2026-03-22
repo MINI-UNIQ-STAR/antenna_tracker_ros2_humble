@@ -9,6 +9,7 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository_owner }}/antenna_tracker_env
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   build-and-test:
@@ -35,11 +36,15 @@ jobs:
 
       - name: Build ROS 2 Workspace
         run: |
-          docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "cd /ros2_ws && source /opt/ros/humble/setup.bash && colcon build"
+          docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "
+            git config --global --add safe.directory /ros2_ws &&
+            cd /ros2_ws && source /opt/ros/humble/setup.bash && colcon build"
 
       - name: Run ROS 2 Tests
         run: |
-          docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "cd /ros2_ws && source /opt/ros/humble/setup.bash && source install/setup.bash && colcon test && colcon test-result"
+          docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "
+            git config --global --add safe.directory /ros2_ws &&
+            cd /ros2_ws && source /opt/ros/humble/setup.bash && source install/setup.bash && colcon test && colcon test-result"
 
       - name: Setup vcan interface
         run: |
