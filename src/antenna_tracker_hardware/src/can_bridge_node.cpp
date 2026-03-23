@@ -104,6 +104,12 @@ CanBridgeNode::CanBridgeNode(const rclcpp::NodeOptions & options)
     "CAN bridge on %s — RX: ESP32 (0x100-0x10A) + STM32H7 (0x200-0x205), TX: 0x300",
     can_iface.c_str());
 
+  /* ── STM32H7 heartbeat watchdog timer (1 Hz) ────────────────────────── */
+  last_heartbeat_time_ = now();
+  heartbeat_watchdog_timer_ = create_wall_timer(
+    std::chrono::seconds(1),
+    std::bind(&CanBridgeNode::heartbeat_watchdog_callback, this));
+
   running_ = true;
   rx_thread_ = std::thread(&CanBridgeNode::rx_thread_func, this);
 }
@@ -142,27 +148,30 @@ void CanBridgeNode::rx_thread_func()
       continue;
     }
 
-    switch (frame.can_id & CAN_SFF_MASK) {
-      /* ESP32 LoRa */
-      case CAN_ID_TARGET_GPS:    process_target_gps(frame);    break;
-      case CAN_ID_TARGET_STATUS: process_target_status(frame); break;
-      case 0x102: process_balloon_utc(frame);     break;
-      case 0x103: process_balloon_accel(frame);   break;
-      case 0x104: process_balloon_gyromag(frame); break;
-      case 0x105: process_balloon_orient(frame);  break;
-      case 0x106: process_balloon_env(frame);     break;
-      case 0x107: process_balloon_press(frame);   break;
-      case 0x108: process_balloon_air(frame);     break;
-      case 0x109: process_balloon_sys(frame);     break;
-      case 0x10A: process_balloon_meta(frame);    break;
-      /* STM32H7 sensors */
-      case CAN_ID_ACCEL:         process_accel(frame);         break;
-      case CAN_ID_GYRO:          process_gyro(frame);          break;
-      case CAN_ID_MAG:           process_mag(frame);           break;
-      case CAN_ID_GPS_FIX:       process_gps_fix(frame);       break;
-      case CAN_ID_ENCODER:       process_encoder(frame);       break;
-      case CAN_ID_HEARTBEAT:     process_heartbeat(frame);     break;
-      default: break;
+    {
+      std::lock_guard<std::mutex> lock(data_mutex_);
+      switch (frame.can_id & CAN_SFF_MASK) {
+        /* ESP32 LoRa */
+        case CAN_ID_TARGET_GPS:    process_target_gps(frame);    break;
+        case CAN_ID_TARGET_STATUS: process_target_status(frame); break;
+        case 0x102: process_balloon_utc(frame);     break;
+        case 0x103: process_balloon_accel(frame);   break;
+        case 0x104: process_balloon_gyromag(frame); break;
+        case 0x105: process_balloon_orient(frame);  break;
+        case 0x106: process_balloon_env(frame);     break;
+        case 0x107: process_balloon_press(frame);   break;
+        case 0x108: process_balloon_air(frame);     break;
+        case 0x109: process_balloon_sys(frame);     break;
+        case 0x10A: process_balloon_meta(frame);    break;
+        /* STM32H7 sensors */
+        case CAN_ID_ACCEL:         process_accel(frame);         break;
+        case CAN_ID_GYRO:          process_gyro(frame);          break;
+        case CAN_ID_MAG:           process_mag(frame);           break;
+        case CAN_ID_GPS_FIX:       process_gps_fix(frame);       break;
+        case CAN_ID_ENCODER:       process_encoder(frame);       break;
+        case CAN_ID_HEARTBEAT:     process_heartbeat(frame);     break;
+        default: break;
+      }
     }
   }
 }
@@ -182,8 +191,14 @@ void CanBridgeNode::process_target_gps(const struct can_frame & frame)
   msg.latitude        = lat_raw / 1e7;
   msg.longitude       = lon_raw / 1e7;
   msg.altitude_m      = 0.0;  /* filled by TARGET_STATUS */
-  msg.rssi_dbm        = rssi_dbm_;
-  msg.link_quality    = link_quality_;
+  // Only publish RSSI if we've received a status frame
+  if ((balloon_rx_mask_ & BIT_STATUS) != 0) {
+    msg.rssi_dbm     = rssi_dbm_;
+    msg.link_quality = link_quality_;
+  } else {
+    msg.rssi_dbm     = 0.0f;
+    msg.link_quality = 0;
+  }
   pub_target_gps_->publish(msg);
 
   // balloon telemetry 조립
@@ -197,6 +212,8 @@ void CanBridgeNode::process_target_status(const struct can_frame & frame)
 {
   if (frame.can_dlc < 8) { return; }
 
+  // altitude in raw int16: unit is METERS (range ±32767 m)
+  // Must match ESP32 firmware packing in antenna_tracker_esp32/can_sender.cpp
   int16_t altitude, rssi;
   std::memcpy(&altitude, &frame.data[0], 2);
   std::memcpy(&rssi,     &frame.data[2], 2);
@@ -216,6 +233,9 @@ void CanBridgeNode::process_target_status(const struct can_frame & frame)
 }
 
 /* ── STM32H7 sensor frame handlers ─────────────────────────────────────── */
+// CAN frame byte order: big-endian (MSB first) for all sources
+// ESP32 LoRa (0x100-0x10A) and STM32H7 (0x200-0x205)
+// Exception: process_gps_fix (0x203) uses memcpy — little-endian (native x86/ARM LE)
 
 /* 0x200: accel (int16 × 1000, m/s²) — buffers until gyro arrives */
 void CanBridgeNode::process_accel(const struct can_frame & frame)
@@ -223,9 +243,9 @@ void CanBridgeNode::process_accel(const struct can_frame & frame)
   if (frame.can_dlc < 6) { return; }
 
   int16_t ax, ay, az;
-  ax = (int16_t)((frame.data[0] << 8) | frame.data[1]);
-  ay = (int16_t)((frame.data[2] << 8) | frame.data[3]);
-  az = (int16_t)((frame.data[4] << 8) | frame.data[5]);
+  ax = static_cast<int16_t>((static_cast<uint16_t>(frame.data[0]) << 8) | static_cast<uint16_t>(frame.data[1]));
+  ay = static_cast<int16_t>((static_cast<uint16_t>(frame.data[2]) << 8) | static_cast<uint16_t>(frame.data[3]));
+  az = static_cast<int16_t>((static_cast<uint16_t>(frame.data[4]) << 8) | static_cast<uint16_t>(frame.data[5]));
 
   pending_imu_.header.stamp               = now();
   pending_imu_.header.frame_id            = "imu_link";
@@ -248,9 +268,9 @@ void CanBridgeNode::process_gyro(const struct can_frame & frame)
   if (frame.can_dlc < 6) { return; }
 
   int16_t gx, gy, gz;
-  gx = (int16_t)((frame.data[0] << 8) | frame.data[1]);
-  gy = (int16_t)((frame.data[2] << 8) | frame.data[3]);
-  gz = (int16_t)((frame.data[4] << 8) | frame.data[5]);
+  gx = static_cast<int16_t>((static_cast<uint16_t>(frame.data[0]) << 8) | static_cast<uint16_t>(frame.data[1]));
+  gy = static_cast<int16_t>((static_cast<uint16_t>(frame.data[2]) << 8) | static_cast<uint16_t>(frame.data[3]));
+  gz = static_cast<int16_t>((static_cast<uint16_t>(frame.data[4]) << 8) | static_cast<uint16_t>(frame.data[5]));
 
   pending_imu_.angular_velocity.x                = gx / 1000.0;
   pending_imu_.angular_velocity.y                = gy / 1000.0;
@@ -272,9 +292,9 @@ void CanBridgeNode::process_mag(const struct can_frame & frame)
   if (frame.can_dlc < 6) { return; }
 
   int16_t mx, my, mz;
-  mx = (int16_t)((frame.data[0] << 8) | frame.data[1]);
-  my = (int16_t)((frame.data[2] << 8) | frame.data[3]);
-  mz = (int16_t)((frame.data[4] << 8) | frame.data[5]);
+  mx = static_cast<int16_t>((static_cast<uint16_t>(frame.data[0]) << 8) | static_cast<uint16_t>(frame.data[1]));
+  my = static_cast<int16_t>((static_cast<uint16_t>(frame.data[2]) << 8) | static_cast<uint16_t>(frame.data[3]));
+  mz = static_cast<int16_t>((static_cast<uint16_t>(frame.data[4]) << 8) | static_cast<uint16_t>(frame.data[5]));
 
   auto msg = sensor_msgs::msg::MagneticField();
   msg.header.stamp    = now();
@@ -308,8 +328,8 @@ void CanBridgeNode::process_encoder(const struct can_frame & frame)
 {
   if (frame.can_dlc < 5) { return; }
 
-  int16_t az_raw = (int16_t)((frame.data[0] << 8) | frame.data[1]);
-  int16_t el_raw = (int16_t)((frame.data[2] << 8) | frame.data[3]);
+  int16_t az_raw = static_cast<int16_t>((static_cast<uint16_t>(frame.data[0]) << 8) | static_cast<uint16_t>(frame.data[1]));
+  int16_t el_raw = static_cast<int16_t>((static_cast<uint16_t>(frame.data[2]) << 8) | static_cast<uint16_t>(frame.data[3]));
   uint8_t flags  = frame.data[4];
 
   auto msg = antenna_tracker_msgs::msg::EncoderFeedback();
@@ -322,7 +342,7 @@ void CanBridgeNode::process_encoder(const struct can_frame & frame)
   pub_encoder_->publish(msg);
 }
 
-/* 0x205: heartbeat — log only */
+/* 0x205: heartbeat — update watchdog state */
 void CanBridgeNode::process_heartbeat(const struct can_frame & frame)
 {
   if (frame.can_dlc < 5) { return; }
@@ -331,8 +351,23 @@ void CanBridgeNode::process_heartbeat(const struct can_frame & frame)
   std::memcpy(&uptime_ms, &frame.data[0], 4);
   uint8_t status = frame.data[4];
 
+  last_heartbeat_time_ = now();
+  stm32_alive_ = true;
+
   RCLCPP_DEBUG(get_logger(), "STM32H7 heartbeat: uptime=%u ms, status=%u",
                uptime_ms, status);
+}
+
+/* 1 Hz watchdog: warn if no heartbeat received within 2 s */
+void CanBridgeNode::heartbeat_watchdog_callback()
+{
+  std::lock_guard<std::mutex> lock(data_mutex_);
+  if ((now() - last_heartbeat_time_).seconds() > 2.0) {
+    if (stm32_alive_) {
+      RCLCPP_WARN(get_logger(), "STM32H7 heartbeat lost — no heartbeat for >2 s");
+      stm32_alive_ = false;
+    }
+  }
 }
 
 /* ── TX: /antenna/motor_cmd → CAN 0x300 ────────────────────────────────── */

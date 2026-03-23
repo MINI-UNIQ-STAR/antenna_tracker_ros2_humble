@@ -52,6 +52,14 @@ void NavigationNode::gps_callback(const sensor_msgs::msg::NavSatFix::SharedPtr m
 
 void NavigationNode::target_callback(const antenna_tracker_msgs::msg::TargetGPS::SharedPtr msg)
 {
+  if (std::isnan(msg->latitude) || std::isnan(msg->longitude) || std::isnan(msg->altitude_m) ||
+      msg->latitude < -90.0 || msg->latitude > 90.0 ||
+      msg->longitude < -180.0 || msg->longitude > 180.0) {
+    RCLCPP_WARN(get_logger(), "Invalid target GPS received (lat=%.4f, lon=%.4f), ignoring",
+                msg->latitude, msg->longitude);
+    return;
+  }
+
   target_lat_ = msg->latitude;
   target_lon_ = msg->longitude;
   target_alt_ = msg->altitude_m;
@@ -67,7 +75,7 @@ void NavigationNode::mode_callback(const std_msgs::msg::UInt8::SharedPtr msg)
 
 void NavigationNode::compute_and_publish()
 {
-  if (!target_valid_) {
+  if (!target_valid_ || !ground_gps_valid_) {
     return;
   }
   /* Only publish nav targets in AUTO mode — MANUAL mode uses set_manual_target service */
@@ -76,16 +84,22 @@ void NavigationNode::compute_and_publish()
   }
 
   double bearing = haversine_bearing(ground_lat_, ground_lon_, target_lat_, target_lon_);
-  double elev = elevation_angle(
+  double elevation = elevation_angle(
     ground_lat_, ground_lon_, ground_alt_,
     target_lat_, target_lon_, target_alt_);
+
+  if (elevation < 0.0) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+      "Target below horizon: elevation=%.1f deg", elevation);
+    elevation = 0.0;  // hardware clamp
+  }
 
   auto az_msg = std_msgs::msg::Float64();
   az_msg.data = bearing;
   pub_target_az_->publish(az_msg);
 
   auto el_msg = std_msgs::msg::Float64();
-  el_msg.data = std::max(0.0, std::min(90.0, elev));
+  el_msg.data = std::min(90.0, elevation);
   pub_target_el_->publish(el_msg);
 }
 
@@ -113,11 +127,23 @@ double NavigationNode::elevation_angle(
 {
   double distance = haversine_distance(lat1, lon1, lat2, lon2);
   if (distance < 1.0) {
-    return 90.0;
+    double delta_alt = alt2 - alt1;
+    if (delta_alt > 0.0) return 90.0;
+    else if (delta_alt < 0.0) return -90.0;
+    else return 0.0;
   }
 
-  double delta_alt = alt2 - alt1;
-  return std::atan2(delta_alt, distance) * RAD_TO_DEG;
+  if (distance > EARTH_RADIUS_M * M_PI * 0.99) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+      "Near-antipodal target (dist=%.0f km): bearing undefined", distance / 1000.0);
+  }
+
+  double gamma = distance / EARTH_RADIUS_M;
+  double elev_rad = std::atan2(
+    (alt2 + EARTH_RADIUS_M) * std::cos(gamma) - (alt1 + EARTH_RADIUS_M),
+    (alt2 + EARTH_RADIUS_M) * std::sin(gamma));
+  double elev = elev_rad * RAD_TO_DEG;
+  return std::max(-90.0, std::min(90.0, elev));
 }
 
 double NavigationNode::haversine_distance(
@@ -131,6 +157,7 @@ double NavigationNode::haversine_distance(
   double a = std::sin(delta_phi / 2.0) * std::sin(delta_phi / 2.0) +
              std::cos(phi1) * std::cos(phi2) *
              std::sin(delta_lambda / 2.0) * std::sin(delta_lambda / 2.0);
+  a = std::max(0.0, std::min(1.0, a));  // clamp to prevent NaN from FP rounding
   double c = 2.0 * std::atan2(std::sqrt(a), std::sqrt(1.0 - a));
 
   return EARTH_RADIUS_M * c;

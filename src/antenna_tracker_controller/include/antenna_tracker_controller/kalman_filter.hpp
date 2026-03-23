@@ -25,6 +25,8 @@ private:
   /* Diagonal covariance (simplified) */
   std::array<std::array<double, 4>, 4> P_;
   double Q_;
+  double Q_pos_;
+  double Q_vel_;
   double R_;
   double dt_;
 };

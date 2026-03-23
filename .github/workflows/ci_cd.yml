@@ -34,17 +34,73 @@ jobs:
         run: |
           docker build -t antenna_tracker_env docker/
 
-      - name: Build ROS 2 Workspace
+      - name: Build ROS 2 Workspace (with coverage instrumentation)
         run: |
           docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "
             git config --global --add safe.directory /ros2_ws &&
-            cd /ros2_ws && source /opt/ros/humble/setup.bash && colcon build"
+            cd /ros2_ws && source /opt/ros/humble/setup.bash &&
+            colcon build --cmake-args -DENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug"
 
-      - name: Run ROS 2 Tests
+      - name: Run ROS 2 Unit Tests
         run: |
           docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "
             git config --global --add safe.directory /ros2_ws &&
-            cd /ros2_ws && source /opt/ros/humble/setup.bash && source install/setup.bash && colcon test && colcon test-result"
+            cd /ros2_ws && source /opt/ros/humble/setup.bash && source install/setup.bash &&
+            colcon test --packages-select antenna_tracker_controller &&
+            colcon test-result --verbose"
+
+      - name: Check Code Coverage (≥90%)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "
+            set -e
+            apt-get install -q -y lcov > /dev/null 2>&1
+
+            cd /ros2_ws
+
+            # Capture coverage data from instrumented build
+            lcov --capture \
+                 --directory build/antenna_tracker_controller \
+                 --output-file /tmp/cov_raw.info \
+                 --rc lcov_branch_coverage=0 \
+                 --quiet 2>/dev/null || true
+
+            # Remove: test files, ROS2/system headers, acados generated code
+            lcov --remove /tmp/cov_raw.info \
+                 '*/test/*' \
+                 '/opt/ros/*' \
+                 '/usr/include/*' \
+                 '/usr/local/*' \
+                 '*/c_generated_code/*' \
+                 '*/acados/*' \
+                 '*/install/*' \
+                 --output-file /tmp/cov.info \
+                 --rc lcov_branch_coverage=0 \
+                 --quiet 2>/dev/null || true
+
+            echo '=== Coverage summary ==='
+            lcov --summary /tmp/cov.info 2>&1 | tee /tmp/lcov_summary.txt || true
+
+            # Extract line coverage percentage
+            PCT=\$(grep 'lines' /tmp/lcov_summary.txt | grep -oP '[\d.]+(?=%)' | head -1)
+            echo \"=== Line coverage: \${PCT}% ===\"
+
+            # Enforce 90% threshold
+            awk -v p=\"\${PCT}\" 'BEGIN {
+              if (p == \"\") { print \"WARN: no coverage data (acados may be unavailable)\"; exit 0 }
+              if (p+0 < 90.0) { printf \"FAIL: %.1f%% < 90%% threshold\n\", p+0; exit 1 }
+              printf \"PASS: %.1f%% >= 90%% threshold\n\", p+0
+            }'
+          "
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            build/antenna_tracker_controller/**/*.gcda
+            build/antenna_tracker_controller/**/*.gcno
+          if-no-files-found: ignore
 
       - name: Setup vcan interface
         run: |

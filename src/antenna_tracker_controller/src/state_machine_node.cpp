@@ -145,10 +145,19 @@ void StateMachineNode::diagnostics_timer_callback()
 
   pub_diagnostics_->publish(diag);
 
-  /* Auto-enter emergency on IMU timeout */
-  if (!diag.imu_ok && current_mode_ != OperationMode::EMERGENCY) {
-    RCLCPP_WARN(get_logger(), "IMU timeout! Entering EMERGENCY mode");
-    current_mode_ = OperationMode::EMERGENCY;
+  /* Auto-enter emergency on IMU timeout (hysteresis: 3 consecutive failures) */
+  if (!diag.imu_ok) {
+    imu_fail_count_++;
+    if (imu_fail_count_ >= 3 && current_mode_ != OperationMode::EMERGENCY) {
+      current_mode_ = OperationMode::EMERGENCY;
+      imu_fail_count_ = 0;
+      std_msgs::msg::UInt8 mode_msg;
+      mode_msg.data = static_cast<uint8_t>(OperationMode::EMERGENCY);
+      pub_mode_->publish(mode_msg);
+      RCLCPP_ERROR(get_logger(), "IMU timeout: auto-entering EMERGENCY mode");
+    }
+  } else {
+    imu_fail_count_ = 0;
   }
 
   /* ── FIX: Publish current mode so controller_node stays in sync ── */

@@ -19,8 +19,11 @@ public:
     double el_target, double el_current, double el_vel,
     double & az_output, double & el_output);
 
+  void set_mpc_to_hz_scale(double scale) { mpc_to_hz_scale_ = scale; }
+
 private:
   antenna_tracker_solver_capsule * acados_capsule_;
+  double mpc_to_hz_scale_{1.0};  ///< conversion: solver rad/s² → stepper Hz
 };
 
 }  // namespace antenna_tracker_controller

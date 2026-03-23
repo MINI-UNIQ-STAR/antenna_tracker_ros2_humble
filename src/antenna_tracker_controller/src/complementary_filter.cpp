@@ -51,23 +51,30 @@ void ComplementaryFilter::update(
   /* Complementary filter: 98% gyro, 2% accel */
   orientation_.roll = alpha_ * gyro_roll + (1.0 - alpha_) * accel_roll;
   orientation_.pitch = alpha_ * gyro_pitch + (1.0 - alpha_) * accel_pitch;
-  orientation_.yaw = gyro_yaw;
+  /* yaw is fused with magnetometer below; do not assign pure gyro_yaw here */
 
-  /* Tilt-compensated magnetometer heading */
-  double roll_rad = orientation_.roll * DEG_TO_RAD;
-  double mx = mag_x;
+  /* Tilt-compensated magnetometer heading (roll + pitch 보상) */
+  double roll_rad  = orientation_.roll  * DEG_TO_RAD;
+  double pitch_rad = orientation_.pitch * DEG_TO_RAD;
+  double mx = mag_x * std::cos(pitch_rad)
+            + mag_y * std::sin(roll_rad) * std::sin(pitch_rad)
+            + mag_z * std::cos(roll_rad) * std::sin(pitch_rad);
   double my = mag_y * std::cos(roll_rad) - mag_z * std::sin(roll_rad);
 
   double heading = std::atan2(my, mx) * RAD_TO_DEG;
   heading += declination_;
 
-  if (heading < 0.0) {
-    heading += 360.0;
-  } else if (heading >= 360.0) {
-    heading -= 360.0;
-  }
+  heading = std::fmod(heading, 360.0);
+  if (heading < 0.0) heading += 360.0;
 
   orientation_.azimuth = heading;
+
+  /* Fuse gyro yaw with magnetometer heading (complementary blend) */
+  double yaw_diff = heading - gyro_yaw;
+  while (yaw_diff >  180.0) yaw_diff -= 360.0;
+  while (yaw_diff < -180.0) yaw_diff += 360.0;
+  orientation_.yaw = gyro_yaw + (1.0 - alpha_) * yaw_diff;
+
   orientation_.elevation = orientation_.pitch;
 }
 

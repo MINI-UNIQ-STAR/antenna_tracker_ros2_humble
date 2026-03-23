@@ -1,6 +1,7 @@
 #ifndef ANTENNA_TRACKER_CONTROLLER__CONTROLLER_NODE_HPP_
 #define ANTENNA_TRACKER_CONTROLLER__CONTROLLER_NODE_HPP_
 
+#include <mutex>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <std_msgs/msg/float64.hpp>
@@ -60,6 +61,9 @@ private:
   bool fusion_valid_{false};
   bool tracking_enabled_{false};  /* false by default — must receive AUTO mode */
   uint8_t current_mode_{2};       /* 2 = STANDBY */
+
+  /* Thread safety */
+  std::mutex state_mutex_;
 
   /* Active goal */
   std::shared_ptr<GoalHandleTrackTarget> active_goal_;

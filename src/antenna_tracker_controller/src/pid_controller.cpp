@@ -10,8 +10,10 @@ namespace antenna_tracker_controller
 CascadePid::CascadePid()
 : outer_integral_(0.0),
   outer_prev_error_(0.0),
+  outer_prev_measurement_(0.0),
   inner_integral_(0.0),
   inner_prev_error_(0.0),
+  inner_prev_measurement_(0.0),
   output_min_(-1000.0),
   output_max_(1000.0),
   dt_(0.01)
@@ -33,11 +35,15 @@ void CascadePid::init(
 double CascadePid::compute(
   double position_target, double position_current, double velocity_current)
 {
+  if (dt_ <= 0.0) return 0.0;
+
   /* Outer loop: position -> velocity setpoint */
   double pos_error = position_target - position_current;
   outer_integral_ += pos_error * dt_;
   outer_integral_ = clamp(outer_integral_, -100.0, 100.0);
-  double pos_derivative = (pos_error - outer_prev_error_) / dt_;
+  /* Derivative on measurement: avoids kick on setpoint change */
+  double pos_derivative = -(position_current - outer_prev_measurement_) / dt_;
+  outer_prev_measurement_ = position_current;
   outer_prev_error_ = pos_error;
 
   double velocity_setpoint =
@@ -49,7 +55,9 @@ double CascadePid::compute(
   double vel_error = velocity_setpoint - velocity_current;
   inner_integral_ += vel_error * dt_;
   inner_integral_ = clamp(inner_integral_, -500.0, 500.0);
-  double vel_derivative = (vel_error - inner_prev_error_) / dt_;
+  /* Derivative on measurement: avoids kick on velocity setpoint change */
+  double vel_derivative = -(velocity_current - inner_prev_measurement_) / dt_;
+  inner_prev_measurement_ = velocity_current;
   inner_prev_error_ = vel_error;
 
   double output =
@@ -64,8 +72,10 @@ void CascadePid::reset()
 {
   outer_integral_ = 0.0;
   outer_prev_error_ = 0.0;
+  outer_prev_measurement_ = 0.0;
   inner_integral_ = 0.0;
   inner_prev_error_ = 0.0;
+  inner_prev_measurement_ = 0.0;
 }
 
 double CascadePid::clamp(double value, double min_val, double max_val)

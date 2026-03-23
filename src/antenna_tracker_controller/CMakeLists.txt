@@ -5,6 +5,14 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+# Code coverage instrumentation (enable with -DENABLE_COVERAGE=ON)
+option(ENABLE_COVERAGE "Build with gcov/lcov coverage instrumentation" OFF)
+if(ENABLE_COVERAGE AND (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"))
+  add_compile_options(-fprofile-arcs -ftest-coverage -O0 -g)
+  add_link_options(-lgcov --coverage)
+  message(STATUS "[coverage] instrumentation enabled")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(ament_cmake REQUIRED)

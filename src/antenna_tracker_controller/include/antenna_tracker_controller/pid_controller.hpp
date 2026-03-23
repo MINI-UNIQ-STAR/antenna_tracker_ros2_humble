@@ -28,8 +28,10 @@ private:
 
   double outer_integral_;
   double outer_prev_error_;
+  double outer_prev_measurement_;
   double inner_integral_;
   double inner_prev_error_;
+  double inner_prev_measurement_;
 
   double output_min_;
   double output_max_;

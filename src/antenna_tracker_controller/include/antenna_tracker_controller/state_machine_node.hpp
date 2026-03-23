@@ -88,6 +88,7 @@ private:
   rclcpp::Time loop_start_time_;
   bool ground_gps_valid_{false};  /* true once /gps/fix is received */
   uint8_t fw_status_{0};
+  int imu_fail_count_{0};
 };
 
 }  // namespace antenna_tracker_controller

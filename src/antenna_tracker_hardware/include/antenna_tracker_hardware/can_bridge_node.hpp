@@ -19,6 +19,7 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -91,6 +92,9 @@ private:
   void motor_cmd_callback(const antenna_tracker_msgs::msg::MotorCommand::SharedPtr msg);
   void send_can_frame(uint32_t id, const uint8_t * data, uint8_t dlc);
 
+  /* STM32H7 heartbeat watchdog (1 Hz timer) */
+  void heartbeat_watchdog_callback();
+
   /* ── CAN ID constants ─────────────────────────────────────────────────── */
   static constexpr uint32_t CAN_ID_TARGET_GPS    = 0x100;
   static constexpr uint32_t CAN_ID_TARGET_STATUS = 0x101;
@@ -123,10 +127,16 @@ private:
   /* ── ROS 2 subscriber ─────────────────────────────────────────────────── */
   rclcpp::Subscription<antenna_tracker_msgs::msg::MotorCommand>::SharedPtr sub_motor_cmd_;
 
+  /* ── Diagnostics timer (1 Hz) ─────────────────────────────────────────── */
+  rclcpp::TimerBase::SharedPtr heartbeat_watchdog_timer_;
+
   /* ── CAN socket ───────────────────────────────────────────────────────── */
   int can_socket_{-1};
   std::thread rx_thread_;
   std::atomic<bool> running_{false};
+
+  /* ── Mutex: protects shared state between RX thread and ROS callbacks ─── */
+  std::mutex data_mutex_;
 
   /* ── Partial IMU assembly (accel + gyro arrive as separate frames) ────── */
   sensor_msgs::msg::Imu pending_imu_;
@@ -141,6 +151,10 @@ private:
   antenna_tracker_msgs::msg::BalloonTelemetry pending_balloon_;
   uint16_t balloon_rx_mask_{0};           // 비트마스크: 수신된 프레임 추적
   static constexpr uint16_t BALLOON_FULL_MASK = 0x07FFu;  // 0x100~0x10A = 11 bits
+
+  /* ── STM32H7 heartbeat watchdog ───────────────────────────────────────── */
+  rclcpp::Time last_heartbeat_time_;
+  bool stm32_alive_{false};
 };
 
 }  // namespace antenna_tracker_hardware

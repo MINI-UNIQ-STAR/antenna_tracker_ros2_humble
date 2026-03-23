@@ -21,6 +21,11 @@ MpcController::~MpcController()
 void MpcController::init()
 {
   acados_capsule_ = antenna_tracker_acados_create_capsule();
+  if (!acados_capsule_) {
+    std::cerr << "[MpcController] Failed to allocate acados capsule\n";
+    acados_capsule_ = nullptr;
+    return;
+  }
   int status = antenna_tracker_acados_create(acados_capsule_);
   if (status) {
     std::cerr << "antenna_tracker_acados_create() returned status " << status << std::endl;
@@ -110,10 +115,12 @@ void MpcController::compute(
   }
 
   double u_out[ANTENNA_TRACKER_NU];
-  ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, 0, "u", &u_out);
+  ocp_nlp_out_get(nlp_config, nlp_dims, nlp_out, 0, "u", u_out);
 
-  az_output = u_out[0];
-  el_output = u_out[1];
+  // TODO: mpc_to_hz_scale_ must be calibrated to match physical motor setup.
+  // Default 1.0 preserves prior behavior. Formula: scale = (steps/rev * gear_ratio) / (2*pi * max_rpm/60)
+  az_output = u_out[0] * mpc_to_hz_scale_;
+  el_output = u_out[1] * mpc_to_hz_scale_;
 }
 
 }  // namespace antenna_tracker_controller
