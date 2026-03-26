@@ -32,13 +32,20 @@ jobs:
 
       - name: Setup vcan interface
         run: |
-          sudo apt-get update -qq
+          set -euo pipefail
 
           if ! ip link show vcan0 >/dev/null 2>&1; then
-            sudo modprobe vcan || {
-              sudo apt-get install -y linux-modules-extra-$(uname -r)
+            if ! sudo modprobe vcan; then
+              echo "Installing linux-modules-extra for $(uname -r) to provide vcan"
+              sudo apt-get -o Acquire::Retries=3 update -qq
+              timeout 15m sudo env DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+                apt-get install -y \
+                -o Dpkg::Use-Pty=0 \
+                -o DPkg::Lock::Timeout=120 \
+                -o Acquire::Retries=3 \
+                linux-modules-extra-$(uname -r)
               sudo modprobe vcan
-            }
+            fi
             sudo ip link add dev vcan0 type vcan
           fi
 
