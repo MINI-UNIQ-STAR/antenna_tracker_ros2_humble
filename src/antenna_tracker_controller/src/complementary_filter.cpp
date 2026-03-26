@@ -74,8 +74,10 @@ void ComplementaryFilter::update(
     orientation_.azimuth = heading;
   }
 
-  /* Fuse gyro yaw with magnetometer heading (complementary blend) */
-  double yaw_diff = heading - gyro_yaw;
+  /* Fuse gyro yaw with magnetometer heading (complementary blend).
+   * Use orientation_.azimuth which holds the latest heading (updated above
+   * when mag signal is valid, retained from previous cycle otherwise). */
+  double yaw_diff = orientation_.azimuth - gyro_yaw;
   while (yaw_diff >  180.0) yaw_diff -= 360.0;
   while (yaw_diff < -180.0) yaw_diff += 360.0;
   orientation_.yaw = gyro_yaw + (1.0 - alpha_) * yaw_diff;
