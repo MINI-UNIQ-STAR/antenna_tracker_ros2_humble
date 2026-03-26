@@ -1,0 +1,40 @@
+name: cppcheck
+
+on:
+  push:
+    branches: [main, claude]
+  pull_request:
+    branches: [main]
+
+jobs:
+  cppcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        run: |
+          cppcheck \
+            --enable=warning,style,performance,portability \
+            --std=c++17 \
+            --error-exitcode=1 \
+            --suppressions-list=cppcheck-suppressions.txt \
+            --suppress=missingIncludeSystem \
+            --suppress=missingInclude \
+            -I src/antenna_tracker_controller/include \
+            -I src/antenna_tracker_hardware/include \
+            src/antenna_tracker_controller/src/ \
+            src/antenna_tracker_controller/test/ \
+            src/antenna_tracker_hardware/src/ \
+            src/antenna_tracker_simulation/src/ \
+            2>&1 | tee cppcheck-report.txt
+
+      - name: Upload cppcheck report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cppcheck-report
+          path: cppcheck-report.txt
