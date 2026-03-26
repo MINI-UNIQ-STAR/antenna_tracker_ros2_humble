@@ -2,6 +2,7 @@
 
 [![CI/CD](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions)
 [![cppcheck](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions/workflows/cppcheck.yml/badge.svg)](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions)
+[![Nightly Simulation](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions/workflows/nightly_sim.yml/badge.svg)](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions)
 
 **야기 안테나(13dBi, 빔폭 ±2°) 자동 추적 시스템**
 STM32H7 Nucleo(Zephyr RTOS) + RPi4B(Ubuntu 22.04 PREEMPT_RT) + Acados NMPC
@@ -76,8 +77,81 @@ I2C2 (PB10/PB11): AS5600@0x36 (고각 엔코더), MLX90393@0x0C (지자기계)
 | 제어 알고리즘 | Acados NMPC (비선형 모델 예측 제어) |
 | 센서 퓨전 | Complementary Filter (α=0.98) + Linear Kalman |
 | 시뮬레이터 | Gazebo Fortress (`ros_gz_bridge`) |
-| CI/CD | GitHub Actions + GHCR Docker |
+| CI/CD | GitHub Actions (`ci_cd`, `cppcheck`, `nightly_sim`) + GHCR Docker |
 | OS (RPi4B) | Ubuntu 22.04 + PREEMPT_RT 커널 |
+
+---
+
+## CI/CD 파이프라인
+
+현재 GitHub Actions 파이프라인은 아래 3개 workflow로 운영됩니다.
+
+### 1. `CI/CD Pipeline` (`.github/workflows/ci_cd.yml`)
+
+- 트리거: `main` 브랜치 `push`, `main` 대상 `pull_request`
+- 러너: `ubuntu-22.04`
+- 목적: 빌드, 단위 테스트, 커버리지, CAN/vcan 통합 테스트, Gazebo E2E, 회귀 테스트, GHCR 배포
+
+실행 순서:
+
+1. Docker 개발 이미지 빌드 (`docker/`)
+2. ROS 2 워크스페이스 Debug + coverage instrumentation 빌드
+3. `antenna_tracker_controller` 단위 테스트 실행
+4. `lcov` 라인 커버리지 검사
+   - 기준: 90% 이상
+   - artifact: `coverage-report`
+5. `vcan0` 준비
+   - GitHub-hosted runner에 `vcan` 모듈이 없으면 `linux-modules-extra-$(uname -r)`를 비대화형으로 설치
+6. CAN bridge 통합 테스트
+7. `sensor_fusion_node` 통합 테스트
+8. balloon telemetry (`0x100~0x10A`) 통합 테스트
+9. Gazebo closed-loop E2E 테스트
+10. Gazebo AUTO closed-loop E2E 테스트
+11. simulation regression/soak 테스트
+12. `push` to `main` 인 경우에만 GHCR 이미지 `ghcr.io/<owner>/antenna_tracker_env:latest` 배포
+
+### 2. `cppcheck` (`.github/workflows/cppcheck.yml`)
+
+- 트리거: `main`, `claude` 브랜치 `push`, `main` 대상 `pull_request`
+- 러너: `ubuntu-latest`
+- 목적: C++ 정적 분석
+
+검사 대상:
+
+- `src/antenna_tracker_controller/src`
+- `src/antenna_tracker_controller/test`
+- `src/antenna_tracker_hardware/src`
+- `src/antenna_tracker_simulation/src`
+
+결과:
+
+- `cppcheck --error-exitcode=1`로 경고를 CI 실패로 승격
+- artifact: `cppcheck-report`
+
+### 3. `Nightly Simulation and Bringup` (`.github/workflows/nightly_sim.yml`)
+
+- 트리거: 매일 `18:00 UTC` 스케줄, 수동 실행 `workflow_dispatch`
+- 한국 시간 기준: 매일 `03:00 KST`
+- 러너: `ubuntu-22.04`
+- 목적: 야간 장주기 회귀 및 bringup smoke 검증
+
+실행 항목:
+
+1. Docker 이미지 빌드
+2. ROS 2 워크스페이스 빌드
+3. `vcan0` 준비
+4. controller 테스트
+5. AUTO simulation E2E
+6. 장시간 regression soak (`SOAK_DURATION_S=300`)
+7. bringup smoke: `sim`
+8. bringup smoke: `web`
+9. bringup smoke: `hardware`
+
+### 배포/운영 메모
+
+- PR에서는 테스트만 수행하고 GHCR 이미지 배포는 하지 않습니다.
+- `CI/CD Pipeline`의 Docker push는 `main` 브랜치 `push`일 때만 동작합니다.
+- GitHub-hosted runner의 Azure 커널에서는 `vcan` 모듈이 기본 제공되지 않을 수 있어 workflow가 이를 자동 복구하도록 구성되어 있습니다.
 
 ---
 
