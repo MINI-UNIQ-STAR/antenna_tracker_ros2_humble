@@ -1,0 +1,2 @@
+useInitializationList:src/antenna_tracker_hardware/src/can_bridge_node.cpp
+unusedFunction:src/antenna_tracker_controller/test/test_controller_node.cpp
