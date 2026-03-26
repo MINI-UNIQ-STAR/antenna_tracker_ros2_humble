@@ -140,14 +140,15 @@ jobs:
               timeout 10 ros2 topic echo /magnetic_field --once > /tmp/mag.txt &
               sleep 2  # 리스너 subscribe 대기
 
-              # CAN 프레임 전송
-              cansend vcan0 204#0B40038403
-              cansend vcan0 200#03E8000000000000
-              cansend vcan0 201#006400000000
-              cansend vcan0 202#03E8000000000000
-
-              # 리스너 수신 대기 (최대 8초)
-              sleep 8
+              # CAN 프레임 반복 전송 (DDS discovery 지연 대비 — 1초 간격 × 8회)
+              # IMU는 accel(0x200)+gyro(0x201) 두 프레임 모두 와야 발행됨
+              for i in 1 2 3 4 5 6 7 8; do
+                cansend vcan0 204#0B40038403
+                cansend vcan0 200#03E8000000000000
+                cansend vcan0 201#006400000000
+                cansend vcan0 202#03E8000000000000
+                sleep 1
+              done
 
               # 결과 확인
               grep -q 'az_angle_deg' /tmp/enc.txt \
