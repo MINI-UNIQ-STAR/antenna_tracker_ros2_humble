@@ -58,7 +58,7 @@ ENV LANG=en_US.UTF-8
 
 # Initialize rosdep
 RUN if [ ! -f /etc/ros/rosdep/sources.list.d/20-default.list ]; then rosdep init; fi
-RUN rosdep update
+RUN for i in 1 2 3 4 5; do rosdep update && break || (echo "rosdep update failed (attempt $i/5), retrying in 15s..." && sleep 15); done
 
 # Set DDS middleware (CycloneDDS, loopback only for container use)
 # Raise the auto participant budget so multi-process sim launches can coexist
