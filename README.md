@@ -1,6 +1,7 @@
 # Antenna Tracker ROS 2 Humble
 
-[![CI/CD](https://github.com/HyeonsuParkembedded/antenna_tracker_ros2_humble/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/HyeonsuParkembedded/antenna_tracker_ros2_humble/actions)
+[![CI/CD](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions/workflows/ci_cd.yml/badge.svg)](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions)
+[![cppcheck](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions/workflows/cppcheck.yml/badge.svg)](https://github.com/MINI-UNIQ-STAR/Antenna_Tracker_ROS2_humble1/actions)
 
 **야기 안테나(13dBi, 빔폭 ±2°) 자동 추적 시스템**
 STM32H7 Nucleo(Zephyr RTOS) + RPi4B(Ubuntu 22.04 PREEMPT_RT) + Acados NMPC
