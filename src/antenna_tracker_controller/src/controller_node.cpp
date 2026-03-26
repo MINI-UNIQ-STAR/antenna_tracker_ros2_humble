@@ -30,6 +30,27 @@ ControllerNode::ControllerNode(const rclcpp::NodeOptions & options)
   double loop_rate = get_parameter("loop_rate_hz").as_double();
   double dt = 1.0 / loop_rate;
 
+  /* Cache safety limits — avoid repeated get_parameter() in 100 Hz callback */
+  az_min_ = get_parameter("azimuth_min_deg").as_double();
+  az_max_ = get_parameter("azimuth_max_deg").as_double();
+  el_min_ = get_parameter("elevation_min_deg").as_double();
+  el_max_ = get_parameter("elevation_max_deg").as_double();
+
+  /* Update cache when parameters change at runtime */
+  param_cb_handle_ = add_on_set_parameters_callback(
+    [this](const std::vector<rclcpp::Parameter> & params) {
+      rcl_interfaces::msg::SetParametersResult result;
+      result.successful = true;
+      for (const auto & p : params) {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (p.get_name() == "azimuth_min_deg")  { az_min_ = p.as_double(); }
+        else if (p.get_name() == "azimuth_max_deg")  { az_max_ = p.as_double(); }
+        else if (p.get_name() == "elevation_min_deg") { el_min_ = p.as_double(); }
+        else if (p.get_name() == "elevation_max_deg") { el_max_ = p.as_double(); }
+      }
+      return result;
+    });
+
   mpc_.init();
   mpc_.set_mpc_to_hz_scale(get_parameter("mpc_to_hz_scale").as_double());
 
@@ -114,6 +135,7 @@ void ControllerNode::target_el_callback(const std_msgs::msg::Float64::SharedPtr 
 
 void ControllerNode::mode_callback(const std_msgs::msg::UInt8::SharedPtr msg)
 {
+  std::lock_guard<std::mutex> lock(state_mutex_);
   current_mode_ = msg->data;
   /* Enable tracking in AUTO (0) and MANUAL (1) modes */
   tracking_enabled_ = (current_mode_ == 0 || current_mode_ == 1);
@@ -121,11 +143,14 @@ void ControllerNode::mode_callback(const std_msgs::msg::UInt8::SharedPtr msg)
 
 void ControllerNode::control_timer_callback()
 {
-  /* Copy shared state under lock to avoid data races with callbacks */
+  /* Copy ALL shared state under lock — includes safety limits and active_goal_ */
   double current_azimuth, current_elevation, az_velocity, el_velocity;
   double target_azimuth, target_elevation;
   bool fusion_valid, tracking_enabled;
   uint8_t current_mode;
+  double az_min, az_max, el_min, el_max;
+  std::shared_ptr<GoalHandleTrackTarget> active_goal;
+  rclcpp::Time goal_start;
   {
     std::lock_guard<std::mutex> lock(state_mutex_);
     current_azimuth  = current_azimuth_;
@@ -137,6 +162,10 @@ void ControllerNode::control_timer_callback()
     fusion_valid     = fusion_valid_;
     tracking_enabled = tracking_enabled_;
     current_mode     = current_mode_;
+    az_min = az_min_; az_max = az_max_;
+    el_min = el_min_; el_max = el_max_;
+    active_goal = active_goal_;
+    goal_start  = goal_start_time_;
   }
 
   /* Always publish antenna state for the UI, regardless of tracking status */
@@ -163,13 +192,14 @@ void ControllerNode::control_timer_callback()
     state_msg.el_motor_cmd = 0.0;
     pub_state_->publish(state_msg);
 
-    if (active_goal_ && active_goal_->is_canceling()) {
+    if (active_goal && active_goal->is_canceling()) {
       auto result = std::make_shared<TrackTarget::Result>();
       result->success = false;
       result->final_azimuth = current_azimuth;
       result->final_elevation = current_elevation;
-      result->tracking_duration_sec = (now() - goal_start_time_).seconds();
-      active_goal_->canceled(result);
+      result->tracking_duration_sec = (now() - goal_start).seconds();
+      active_goal->canceled(result);
+      std::lock_guard<std::mutex> lock(state_mutex_);
       active_goal_.reset();
     }
     return;
@@ -187,11 +217,7 @@ void ControllerNode::control_timer_callback()
     target_elevation, current_elevation, el_velocity,
     az_cmd, el_cmd);
 
-  /* Safety limits — allow commands that return toward valid range */
-  double az_min = get_parameter("azimuth_min_deg").as_double();
-  double az_max = get_parameter("azimuth_max_deg").as_double();
-  double el_min = get_parameter("elevation_min_deg").as_double();
-  double el_max = get_parameter("elevation_max_deg").as_double();
+  /* Safety limits — use cached values (updated by parameter callback) */
 
   if (current_azimuth < az_min) {
     az_cmd = std::max(0.0, az_cmd);   // only allow positive (CW) to return
@@ -227,15 +253,16 @@ void ControllerNode::control_timer_callback()
   state_msg.el_motor_cmd = el_cmd;
   pub_state_->publish(state_msg);
 
-  /* Action feedback */
-  if (active_goal_) {
-    if (active_goal_->is_canceling()) {
+  /* Action feedback — uses local copy of active_goal (thread-safe) */
+  if (active_goal) {
+    if (active_goal->is_canceling()) {
       auto result = std::make_shared<TrackTarget::Result>();
       result->success = false;
       result->final_azimuth = current_azimuth;
       result->final_elevation = current_elevation;
-      result->tracking_duration_sec = (now() - goal_start_time_).seconds();
-      active_goal_->canceled(result);
+      result->tracking_duration_sec = (now() - goal_start).seconds();
+      active_goal->canceled(result);
+      std::lock_guard<std::mutex> lock(state_mutex_);
       active_goal_.reset();
       return;
     }
@@ -245,15 +272,15 @@ void ControllerNode::control_timer_callback()
     feedback->current_elevation = current_elevation;
     feedback->az_error = az_error_raw;  /* 최단경로 랩핑 오차 사용 (line 143-145) */
     feedback->el_error = target_elevation - current_elevation;
-    active_goal_->publish_feedback(feedback);
+    active_goal->publish_feedback(feedback);
 
     /* Check completion */
-    auto goal = active_goal_->get_goal();
+    auto goal = active_goal->get_goal();
     double error = std::sqrt(
       feedback->az_error * feedback->az_error +
       feedback->el_error * feedback->el_error);
 
-    double elapsed = (now() - goal_start_time_).seconds();
+    double elapsed = (now() - goal_start).seconds();
 
     if (error <= goal->tolerance_deg) {
       auto result = std::make_shared<TrackTarget::Result>();
@@ -261,7 +288,8 @@ void ControllerNode::control_timer_callback()
       result->final_azimuth = current_azimuth;
       result->final_elevation = current_elevation;
       result->tracking_duration_sec = elapsed;
-      active_goal_->succeed(result);
+      active_goal->succeed(result);
+      std::lock_guard<std::mutex> lock(state_mutex_);
       active_goal_.reset();
     } else if (elapsed > goal->timeout_sec) {
       auto result = std::make_shared<TrackTarget::Result>();
@@ -269,7 +297,8 @@ void ControllerNode::control_timer_callback()
       result->final_azimuth = current_azimuth;
       result->final_elevation = current_elevation;
       result->tracking_duration_sec = elapsed;
-      active_goal_->abort(result);
+      active_goal->abort(result);
+      std::lock_guard<std::mutex> lock(state_mutex_);
       active_goal_.reset();
     }
   }
@@ -294,6 +323,8 @@ rclcpp_action::CancelResponse ControllerNode::handle_cancel(
 void ControllerNode::handle_accepted(
   const std::shared_ptr<GoalHandleTrackTarget> goal_handle)
 {
+  auto goal = goal_handle->get_goal();
+  std::lock_guard<std::mutex> lock(state_mutex_);
   if (active_goal_) {
     auto prev_result = std::make_shared<TrackTarget::Result>();
     prev_result->success = false;
@@ -301,13 +332,8 @@ void ControllerNode::handle_accepted(
   }
   active_goal_ = goal_handle;
   goal_start_time_ = now();
-
-  auto goal = goal_handle->get_goal();
-  {
-    std::lock_guard<std::mutex> lock(state_mutex_);
-    target_azimuth_ = goal->target_azimuth_deg;
-    target_elevation_ = goal->target_elevation_deg;
-  }
+  target_azimuth_ = goal->target_azimuth_deg;
+  target_elevation_ = goal->target_elevation_deg;
 }
 
 }  // namespace antenna_tracker_controller

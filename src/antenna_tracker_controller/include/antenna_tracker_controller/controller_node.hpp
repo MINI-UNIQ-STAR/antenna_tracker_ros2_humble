@@ -62,12 +62,21 @@ private:
   bool tracking_enabled_{false};  /* false by default — must receive AUTO mode */
   uint8_t current_mode_{2};       /* 2 = STANDBY */
 
-  /* Thread safety */
+  /* Cached safety limits — set at construction, updated via parameter callback */
+  double az_min_{0.0};
+  double az_max_{360.0};
+  double el_min_{0.0};
+  double el_max_{90.0};
+
+  /* Thread safety — protects all shared state including active_goal_ */
   std::mutex state_mutex_;
 
   /* Active goal */
   std::shared_ptr<GoalHandleTrackTarget> active_goal_;
   rclcpp::Time goal_start_time_;
+
+  /* Parameter event callback handle */
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
 };
 
 }  // namespace antenna_tracker_controller

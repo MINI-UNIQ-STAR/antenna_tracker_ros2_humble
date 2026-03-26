@@ -20,15 +20,24 @@ MpcController::~MpcController()
 
 void MpcController::init()
 {
+  // Free any existing capsule to prevent memory leak on re-initialization
+  if (acados_capsule_) {
+    antenna_tracker_acados_free(acados_capsule_);
+    antenna_tracker_acados_free_capsule(acados_capsule_);
+    acados_capsule_ = nullptr;
+  }
+
   acados_capsule_ = antenna_tracker_acados_create_capsule();
   if (!acados_capsule_) {
     std::cerr << "[MpcController] Failed to allocate acados capsule\n";
-    acados_capsule_ = nullptr;
     return;
   }
   int status = antenna_tracker_acados_create(acados_capsule_);
   if (status) {
     std::cerr << "antenna_tracker_acados_create() returned status " << status << std::endl;
+    // Free half-initialized capsule so compute() stays safe (null check)
+    antenna_tracker_acados_free_capsule(acados_capsule_);
+    acados_capsule_ = nullptr;
   }
 }
 

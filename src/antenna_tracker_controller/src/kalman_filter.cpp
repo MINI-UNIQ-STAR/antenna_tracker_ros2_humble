@@ -37,7 +37,8 @@ void KalmanFilterAzEl::init(double dt, double q_process, double r_measurement)
   Q_ = q_process;
   Q_pos_ = Q_;
   Q_vel_ = Q_ * 10.0;
-  R_ = r_measurement;
+  /* R_ must be > 0 to prevent division by zero in S_az = P_[0][0] + R_ */
+  R_ = (r_measurement > 0.0) ? r_measurement : 1e-6;
 
   state_.fill(0.0);
   for (auto & row : P_) {

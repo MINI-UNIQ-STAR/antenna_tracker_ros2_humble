@@ -1,6 +1,7 @@
 #ifndef ANTENNA_TRACKER_CONTROLLER__SENSOR_FUSION_NODE_HPP_
 #define ANTENNA_TRACKER_CONTROLLER__SENSOR_FUSION_NODE_HPP_
 
+#include <mutex>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/magnetic_field.hpp>
@@ -35,6 +36,7 @@ private:
   ComplementaryFilter comp_filter_;
   KalmanFilterAzEl kalman_filter_;
 
+  mutable std::mutex data_mutex_;  ///< protects latest_imu_, latest_mag_, *_received_
   sensor_msgs::msg::Imu::SharedPtr latest_imu_;
   sensor_msgs::msg::MagneticField::SharedPtr latest_mag_;
 

@@ -17,7 +17,8 @@ ComplementaryFilter::ComplementaryFilter()
 
 void ComplementaryFilter::set_alpha(double alpha)
 {
-  alpha_ = alpha;
+  /* Clamp to [0, 1]: values outside invert the filter blend */
+  alpha_ = (alpha < 0.0) ? 0.0 : (alpha > 1.0) ? 1.0 : alpha;
 }
 
 void ComplementaryFilter::set_declination(double declination_deg)
@@ -34,6 +35,8 @@ void ComplementaryFilter::update(
   double dt = 0.01;
   if (initialized_ && timestamp_sec > last_timestamp_sec_) {
     dt = timestamp_sec - last_timestamp_sec_;
+    /* Clamp dt to avoid gyro-integration explosion on large clock gaps */
+    if (dt > 0.1) { dt = 0.1; }
   }
   last_timestamp_sec_ = timestamp_sec;
   initialized_ = true;
@@ -61,13 +64,15 @@ void ComplementaryFilter::update(
             + mag_z * std::cos(roll_rad) * std::sin(pitch_rad);
   double my = mag_y * std::cos(roll_rad) - mag_z * std::sin(roll_rad);
 
-  double heading = std::atan2(my, mx) * RAD_TO_DEG;
-  heading += declination_;
-
-  heading = std::fmod(heading, 360.0);
-  if (heading < 0.0) heading += 360.0;
-
-  orientation_.azimuth = heading;
+  /* Guard: skip heading update when magnetometer has no signal (mx==my==0).
+   * atan2(0,0) is implementation-defined; retain previous azimuth instead. */
+  if (mx != 0.0 || my != 0.0) {
+    double heading = std::atan2(my, mx) * RAD_TO_DEG;
+    heading += declination_;
+    heading = std::fmod(heading, 360.0);
+    if (heading < 0.0) heading += 360.0;
+    orientation_.azimuth = heading;
+  }
 
   /* Fuse gyro yaw with magnetometer heading (complementary blend) */
   double yaw_diff = heading - gyro_yaw;

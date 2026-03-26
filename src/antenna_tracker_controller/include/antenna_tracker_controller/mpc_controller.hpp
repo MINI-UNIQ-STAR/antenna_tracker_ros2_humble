@@ -12,8 +12,15 @@ public:
   MpcController();
   ~MpcController();
 
+  // Rule of Five: raw pointer ownership — disable copy and move
+  MpcController(const MpcController &) = delete;
+  MpcController & operator=(const MpcController &) = delete;
+  MpcController(MpcController &&) = delete;
+  MpcController & operator=(MpcController &&) = delete;
+
   void init();
-  
+  bool is_initialized() const { return acados_capsule_ != nullptr; }
+
   void compute(
     double az_target, double az_current, double az_vel,
     double el_target, double el_current, double el_vel,

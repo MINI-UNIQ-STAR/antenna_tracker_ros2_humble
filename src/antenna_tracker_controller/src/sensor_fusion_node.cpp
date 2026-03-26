@@ -55,12 +55,14 @@ SensorFusionNode::SensorFusionNode(const rclcpp::NodeOptions & options)
 
 void SensorFusionNode::imu_callback(const sensor_msgs::msg::Imu::SharedPtr msg)
 {
+  std::lock_guard<std::mutex> lock(data_mutex_);
   latest_imu_ = msg;
   imu_received_ = true;
 }
 
 void SensorFusionNode::mag_callback(const sensor_msgs::msg::MagneticField::SharedPtr msg)
 {
+  std::lock_guard<std::mutex> lock(data_mutex_);
   latest_mag_ = msg;
   mag_received_ = true;
 }
@@ -99,30 +101,40 @@ void SensorFusionNode::gps_callback(const sensor_msgs::msg::NavSatFix::SharedPtr
 
 void SensorFusionNode::timer_callback()
 {
-  if (!imu_received_) {
-    return;  /* Wait for first IMU sample */
+  /* Copy shared pointers under lock to avoid data race with callbacks */
+  sensor_msgs::msg::Imu::SharedPtr local_imu;
+  sensor_msgs::msg::MagneticField::SharedPtr local_mag;
+  bool mag_ok = false;
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    if (!imu_received_) {
+      return;  /* Wait for first IMU sample */
+    }
+    local_imu = latest_imu_;
+    local_mag = latest_mag_;
+    mag_ok = mag_received_;
   }
 
   /* BMI270 outputs raw accel + gyro only (no orientation quaternion).
    * Always run complementary filter to compute roll/pitch/yaw.
    * If MLX90393 mag is not yet available, heading is gyro-integrated only. */
-  double timestamp = latest_imu_->header.stamp.sec +
-                     latest_imu_->header.stamp.nanosec * 1e-9;
+  double timestamp = local_imu->header.stamp.sec +
+                     local_imu->header.stamp.nanosec * 1e-9;
 
   double mag_x = 0.0, mag_y = 0.0, mag_z = 0.0;
-  if (mag_received_) {
-    mag_x = latest_mag_->magnetic_field.x * 1e6;  /* T → µT */
-    mag_y = latest_mag_->magnetic_field.y * 1e6;
-    mag_z = latest_mag_->magnetic_field.z * 1e6;
+  if (mag_ok && local_mag) {
+    mag_x = local_mag->magnetic_field.x * 1e6;  /* T → µT */
+    mag_y = local_mag->magnetic_field.y * 1e6;
+    mag_z = local_mag->magnetic_field.z * 1e6;
   }
 
   comp_filter_.update(
-    latest_imu_->linear_acceleration.x,
-    latest_imu_->linear_acceleration.y,
-    latest_imu_->linear_acceleration.z,
-    latest_imu_->angular_velocity.x * 57.29577951,
-    latest_imu_->angular_velocity.y * 57.29577951,
-    latest_imu_->angular_velocity.z * 57.29577951,
+    local_imu->linear_acceleration.x,
+    local_imu->linear_acceleration.y,
+    local_imu->linear_acceleration.z,
+    local_imu->angular_velocity.x * 57.29577951,
+    local_imu->angular_velocity.y * 57.29577951,
+    local_imu->angular_velocity.z * 57.29577951,
     mag_x, mag_y, mag_z,
     timestamp);
 

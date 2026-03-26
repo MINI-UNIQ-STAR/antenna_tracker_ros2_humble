@@ -98,7 +98,9 @@ CanBridgeNode::CanBridgeNode(const rclcpp::NodeOptions & options)
   rfilter[14].can_id = 0x108; rfilter[14].can_mask = CAN_SFF_MASK;
   rfilter[15].can_id = 0x109; rfilter[15].can_mask = CAN_SFF_MASK;
   rfilter[16].can_id = 0x10A; rfilter[16].can_mask = CAN_SFF_MASK;
-  setsockopt(can_socket_, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter));
+  if (setsockopt(can_socket_, SOL_CAN_RAW, CAN_RAW_FILTER, &rfilter, sizeof(rfilter)) < 0) {
+    RCLCPP_ERROR(get_logger(), "Failed to set CAN RX filter: %s", strerror(errno));
+  }
 
   RCLCPP_INFO(get_logger(),
     "CAN bridge on %s — RX: ESP32 (0x100-0x10A) + STM32H7 (0x200-0x205), TX: 0x300",
@@ -148,30 +150,31 @@ void CanBridgeNode::rx_thread_func()
       continue;
     }
 
-    {
-      std::lock_guard<std::mutex> lock(data_mutex_);
-      switch (frame.can_id & CAN_SFF_MASK) {
-        /* ESP32 LoRa */
-        case CAN_ID_TARGET_GPS:    process_target_gps(frame);    break;
-        case CAN_ID_TARGET_STATUS: process_target_status(frame); break;
-        case 0x102: process_balloon_utc(frame);     break;
-        case 0x103: process_balloon_accel(frame);   break;
-        case 0x104: process_balloon_gyromag(frame); break;
-        case 0x105: process_balloon_orient(frame);  break;
-        case 0x106: process_balloon_env(frame);     break;
-        case 0x107: process_balloon_press(frame);   break;
-        case 0x108: process_balloon_air(frame);     break;
-        case 0x109: process_balloon_sys(frame);     break;
-        case 0x10A: process_balloon_meta(frame);    break;
-        /* STM32H7 sensors */
-        case CAN_ID_ACCEL:         process_accel(frame);         break;
-        case CAN_ID_GYRO:          process_gyro(frame);          break;
-        case CAN_ID_MAG:           process_mag(frame);           break;
-        case CAN_ID_GPS_FIX:       process_gps_fix(frame);       break;
-        case CAN_ID_ENCODER:       process_encoder(frame);       break;
-        case CAN_ID_HEARTBEAT:     process_heartbeat(frame);     break;
-        default: break;
-      }
+    /* No outer lock here — each process_* function is called only from this
+     * thread, so their internal state (pending_imu_, pending_balloon_, etc.)
+     * needs no protection.  process_heartbeat() acquires data_mutex_ itself
+     * to protect the cross-thread last_heartbeat_time_ / stm32_alive_ fields. */
+    switch (frame.can_id & CAN_SFF_MASK) {
+      /* ESP32 LoRa */
+      case CAN_ID_TARGET_GPS:    process_target_gps(frame);    break;
+      case CAN_ID_TARGET_STATUS: process_target_status(frame); break;
+      case 0x102: process_balloon_utc(frame);     break;
+      case 0x103: process_balloon_accel(frame);   break;
+      case 0x104: process_balloon_gyromag(frame); break;
+      case 0x105: process_balloon_orient(frame);  break;
+      case 0x106: process_balloon_env(frame);     break;
+      case 0x107: process_balloon_press(frame);   break;
+      case 0x108: process_balloon_air(frame);     break;
+      case 0x109: process_balloon_sys(frame);     break;
+      case 0x10A: process_balloon_meta(frame);    break;
+      /* STM32H7 sensors */
+      case CAN_ID_ACCEL:         process_accel(frame);         break;
+      case CAN_ID_GYRO:          process_gyro(frame);          break;
+      case CAN_ID_MAG:           process_mag(frame);           break;
+      case CAN_ID_GPS_FIX:       process_gps_fix(frame);       break;
+      case CAN_ID_ENCODER:       process_encoder(frame);       break;
+      case CAN_ID_HEARTBEAT:     process_heartbeat(frame);     break;
+      default: break;
     }
   }
 }
@@ -347,12 +350,19 @@ void CanBridgeNode::process_heartbeat(const struct can_frame & frame)
 {
   if (frame.can_dlc < 5) { return; }
 
-  uint32_t uptime_ms;
-  std::memcpy(&uptime_ms, &frame.data[0], 4);
+  /* Use big-endian decode (MSB first) consistent with all other STM32H7 frames */
+  uint32_t uptime_ms = (static_cast<uint32_t>(frame.data[0]) << 24) |
+                       (static_cast<uint32_t>(frame.data[1]) << 16) |
+                       (static_cast<uint32_t>(frame.data[2]) << 8) |
+                       static_cast<uint32_t>(frame.data[3]);
   uint8_t status = frame.data[4];
 
-  last_heartbeat_time_ = now();
-  stm32_alive_ = true;
+  /* Narrow lock: only cross-thread fields need protection */
+  {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    last_heartbeat_time_ = now();
+    stm32_alive_ = true;
+  }
 
   RCLCPP_DEBUG(get_logger(), "STM32H7 heartbeat: uptime=%u ms, status=%u",
                uptime_ms, status);
@@ -564,7 +574,8 @@ void CanBridgeNode::try_publish_balloon_telemetry()
   pending_balloon_.header.frame_id = "balloon";
   pub_balloon_telem_->publish(pending_balloon_);
 
-  balloon_rx_mask_ = 0;  // 다음 세트 대기
+  balloon_rx_mask_ = 0;
+  pending_balloon_ = antenna_tracker_msgs::msg::BalloonTelemetry{};  // 다음 세트를 위해 stale 필드 초기화
 }
 
 }  // namespace antenna_tracker_hardware

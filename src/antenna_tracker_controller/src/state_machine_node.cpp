@@ -61,6 +61,9 @@ StateMachineNode::StateMachineNode(const rclcpp::NodeOptions & options)
     std::bind(&StateMachineNode::set_zero_offset_callback, this,
               std::placeholders::_1, std::placeholders::_2));
 
+  imu_timeout_sec_  = get_parameter("imu_timeout_sec").as_double();
+  lora_timeout_sec_ = get_parameter("lora_timeout_sec").as_double();
+
   double diag_rate = get_parameter("diagnostics_rate_hz").as_double();
   auto period = std::chrono::duration<double>(1.0 / diag_rate);
   diagnostics_timer_ = create_wall_timer(
@@ -114,18 +117,15 @@ void StateMachineNode::diagnostics_timer_callback()
   auto diag = antenna_tracker_msgs::msg::TrackerDiagnostics();
   diag.header.stamp = now();
 
-  double imu_timeout = get_parameter("imu_timeout_sec").as_double();
-  double lora_timeout = get_parameter("lora_timeout_sec").as_double();
-
   double imu_age = (now() - last_imu_time_).seconds();
   double encoder_age = (now() - last_encoder_time_).seconds();
   double target_age = (now() - last_target_time_).seconds();
   double hb_age = (now() - last_heartbeat_time_).seconds();
 
-  diag.imu_ok = (imu_age < imu_timeout);
+  diag.imu_ok = (imu_age < imu_timeout_sec_);
   diag.mag_ok = diag.imu_ok;  /* BNO055 mag comes with IMU data */
-  diag.encoder_ok = (encoder_age < imu_timeout);
-  diag.can_ok = (target_age < lora_timeout);
+  diag.encoder_ok = (encoder_age < imu_timeout_sec_);
+  diag.can_ok = (target_age < lora_timeout_sec_);
   /* ── FIX: gps_ok reflects actual ground GPS reception state ── */
   diag.gps_ok = ground_gps_valid_ && (hb_age < 2.0); /* Assume GS GPS comes via heartbeat/micro-ROS */
 
@@ -137,11 +137,13 @@ void StateMachineNode::diagnostics_timer_callback()
     diag.cpu_temp_c = temp_millic / 1000.0f;
   }
 
-  /* Loop rate calculation */
+  /* Loop rate calculation — reset each diagnostics cycle for current rate (not cumulative average) */
   double elapsed = (now() - loop_start_time_).seconds();
   if (elapsed > 0.0) {
     diag.loop_rate_hz = static_cast<float>(loop_count_ / elapsed);
   }
+  loop_count_ = 0;
+  loop_start_time_ = now();
 
   pub_diagnostics_->publish(diag);
 

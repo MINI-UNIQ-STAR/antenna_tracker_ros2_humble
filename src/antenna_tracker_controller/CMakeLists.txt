@@ -13,6 +13,14 @@ if(ENABLE_COVERAGE AND (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"))
   message(STATUS "[coverage] instrumentation enabled")
 endif()
 
+# AddressSanitizer + UBSan (enable with -DENABLE_SANITIZERS=ON)
+option(ENABLE_SANITIZERS "Build with AddressSanitizer and UBSan" OFF)
+if(ENABLE_SANITIZERS AND (CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"))
+  add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -g)
+  add_link_options(-fsanitize=address,undefined)
+  message(STATUS "[sanitizers] ASan + UBSan enabled")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 
 find_package(ament_cmake REQUIRED)
@@ -24,8 +32,20 @@ find_package(antenna_tracker_msgs REQUIRED)
 
 include_directories(include)
 
-# Acados Integration
-set(ACADOS_DIR "/opt/acados")
+# Acados Integration — resolve path from cmake variable, env variable, or default
+if(NOT DEFINED ACADOS_DIR)
+  if(DEFINED ENV{ACADOS_SOURCE_DIR})
+    set(ACADOS_DIR "$ENV{ACADOS_SOURCE_DIR}")
+  else()
+    set(ACADOS_DIR "/opt/acados")
+  endif()
+endif()
+if(NOT EXISTS "${ACADOS_DIR}/include/acados")
+  message(WARNING
+    "[acados] Not found at '${ACADOS_DIR}'. "
+    "Set -DACADOS_DIR=<path> or export ACADOS_SOURCE_DIR=<path>. "
+    "MPC controller will fail to compile without acados.")
+endif()
 include_directories(
   ${ACADOS_DIR}/include
   ${ACADOS_DIR}/include/acados

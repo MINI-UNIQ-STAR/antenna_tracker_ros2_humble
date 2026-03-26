@@ -79,6 +79,10 @@ private:
   double az_offset_{0.0};
   double el_offset_{0.0};
 
+  /* Cached parameters — set at construction to avoid repeated get_parameter() */
+  double imu_timeout_sec_{1.0};
+  double lora_timeout_sec_{12.0};
+
   /* Health tracking */
   rclcpp::Time last_imu_time_;
   rclcpp::Time last_encoder_time_;
