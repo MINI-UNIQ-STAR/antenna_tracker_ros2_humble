@@ -41,68 +41,18 @@ jobs:
             cd /ros2_ws && source /opt/ros/humble/setup.bash &&
             colcon build --cmake-args -DENABLE_COVERAGE=ON -DCMAKE_BUILD_TYPE=Debug"
 
-      - name: Run ROS 2 Unit Tests
+      - name: Run ROS 2 Package Tests
         run: |
           docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "
             git config --global --add safe.directory /ros2_ws &&
             cd /ros2_ws && source /opt/ros/humble/setup.bash && source install/setup.bash &&
-            colcon test --packages-select antenna_tracker_controller &&
+            colcon test --packages-select \
+              antenna_tracker_controller \
+              antenna_tracker_hardware \
+              antenna_tracker_bringup \
+              antenna_tracker_simulation \
+              antenna_tracker_web &&
             colcon test-result --verbose"
-
-      - name: Check Code Coverage (≥90%)
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "
-            set -e
-            apt-get update -qq
-            apt-get install -q -y lcov > /dev/null 2>&1
-
-            cd /ros2_ws
-
-            # Capture coverage data from instrumented build
-            lcov --capture \
-                 --directory build/antenna_tracker_controller \
-                 --output-file /tmp/cov_raw.info \
-                 --rc lcov_branch_coverage=0 \
-                 --quiet 2>/dev/null || true
-
-            # Remove: test files, ROS2/system headers, acados generated code
-            lcov --remove /tmp/cov_raw.info \
-                 '*/test/*' \
-                 '*/rosidl_generator_cpp/*' \
-                 '/opt/ros/*' \
-                 '/usr/include/*' \
-                 '/usr/local/*' \
-                 '*/c_generated_code/*' \
-                 '*/acados/*' \
-                 '*/install/*' \
-                 --output-file /tmp/cov.info \
-                 --rc lcov_branch_coverage=0 \
-                 --quiet 2>/dev/null || true
-
-            echo '=== Coverage summary ==='
-            lcov --summary /tmp/cov.info 2>&1 | tee /tmp/lcov_summary.txt || true
-
-            # Extract line coverage percentage
-            PCT=\$(grep 'lines' /tmp/lcov_summary.txt | grep -oP '[\d.]+(?=%)' | head -1)
-            echo \"=== Line coverage: \${PCT}% ===\"
-
-            # Enforce 90% threshold
-            awk -v p=\"\${PCT}\" 'BEGIN {
-              if (p == \"\") { print \"WARN: no coverage data (acados may be unavailable)\"; exit 0 }
-              if (p+0 < 90.0) { printf \"FAIL: %.1f%% < 90%% threshold\n\", p+0; exit 1 }
-              printf \"PASS: %.1f%% >= 90%% threshold\n\", p+0
-            }'
-          "
-
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-report
-          path: |
-            build/antenna_tracker_controller/**/*.gcda
-            build/antenna_tracker_controller/**/*.gcno
-          if-no-files-found: ignore
 
       - name: Setup vcan interface
         run: |
@@ -265,6 +215,7 @@ jobs:
       - name: End-to-end simulation test — Gazebo closed loop
         run: |
           docker run --rm \
+            -e SIM_AUTO_TIMEOUT=300 \
             -v ${{ github.workspace }}:/ros2_ws \
             antenna_tracker_env bash -lc "
               set -e
@@ -275,11 +226,23 @@ jobs:
       - name: End-to-end simulation test — Gazebo AUTO closed loop
         run: |
           docker run --rm \
+            -e SIM_AUTO_TIMEOUT=300 \
             -v ${{ github.workspace }}:/ros2_ws \
             antenna_tracker_env bash -lc "
               set -e
               cd /ros2_ws
               bash /ros2_ws/scripts/test_sim_auto_e2e.sh
+            "
+
+      - name: End-to-end simulation test — Gazebo AUTO closed loop with noise
+        run: |
+          docker run --rm \
+            -e SIM_AUTO_TIMEOUT=300 \
+            -v ${{ github.workspace }}:/ros2_ws \
+            antenna_tracker_env bash -lc "
+              set -e
+              cd /ros2_ws
+              bash /ros2_ws/scripts/test_sim_noise_e2e.sh
             "
 
       - name: Simulation regression test — boundaries and soak
@@ -291,6 +254,99 @@ jobs:
               cd /ros2_ws
               bash /ros2_ws/scripts/test_sim_regression.sh
             "
+
+      - name: Bringup smoke test — sim
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/ros2_ws \
+            antenna_tracker_env bash -lc "
+              set -e
+              cd /ros2_ws
+              source /opt/ros/humble/setup.bash
+              source install/setup.bash
+              bash /ros2_ws/scripts/test_bringup_smoke.sh sim
+            "
+
+      - name: Bringup smoke test — web
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}:/ros2_ws \
+            antenna_tracker_env bash -lc "
+              set -e
+              cd /ros2_ws
+              source /opt/ros/humble/setup.bash
+              source install/setup.bash
+              bash /ros2_ws/scripts/test_bringup_smoke.sh web
+            "
+
+      - name: Bringup smoke test — hardware
+        run: |
+          docker run --rm --privileged --network host \
+            -v ${{ github.workspace }}:/ros2_ws \
+            antenna_tracker_env bash -lc "
+              set -e
+              cd /ros2_ws
+              source /opt/ros/humble/setup.bash
+              source install/setup.bash
+              bash /ros2_ws/scripts/test_bringup_smoke.sh hardware
+            "
+
+      - name: Check Code Coverage (≥90%)
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -c "
+            set -e
+            apt-get update -qq
+            apt-get install -q -y lcov > /dev/null 2>&1
+
+            cd /ros2_ws
+
+            lcov --capture \
+                 --directory build/antenna_tracker_controller \
+                 --directory build/antenna_tracker_hardware \
+                 --directory build/antenna_tracker_simulation \
+                 --output-file /tmp/cov_raw.info \
+                 --rc lcov_branch_coverage=0 \
+                 --quiet 2>/dev/null || true
+
+            lcov --remove /tmp/cov_raw.info \
+                 '*/test/*' \
+                 '*/rosidl_generator_cpp/*' \
+                 '/opt/ros/*' \
+                 '/usr/include/*' \
+                 '/usr/local/*' \
+                 '*/c_generated_code/*' \
+                 '*/acados/*' \
+                 '*/install/*' \
+                 --output-file /tmp/cov.info \
+                 --rc lcov_branch_coverage=0 \
+                 --quiet 2>/dev/null || true
+
+            echo '=== Coverage summary ==='
+            lcov --summary /tmp/cov.info 2>&1 | tee /tmp/lcov_summary.txt || true
+
+            PCT=\$(grep 'lines' /tmp/lcov_summary.txt | grep -oP '[\d.]+(?=%)' | head -1)
+            echo \"=== Line coverage: \${PCT}% ===\"
+
+            awk -v p=\"\${PCT}\" 'BEGIN {
+              if (p == \"\") { print \"WARN: no coverage data\"; exit 0 }
+              if (p+0 < 90.0) { printf \"FAIL: %.1f%% < 90%% threshold\n\", p+0; exit 1 }
+              printf \"PASS: %.1f%% >= 90%% threshold\n\", p+0
+            }'
+          "
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            build/antenna_tracker_controller/**/*.gcda
+            build/antenna_tracker_controller/**/*.gcno
+            build/antenna_tracker_hardware/**/*.gcda
+            build/antenna_tracker_hardware/**/*.gcno
+            build/antenna_tracker_simulation/**/*.gcda
+            build/antenna_tracker_simulation/**/*.gcno
+          if-no-files-found: ignore
 
       - name: Push Docker image (CD)
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

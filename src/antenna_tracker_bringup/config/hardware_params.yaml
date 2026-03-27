@@ -46,7 +46,7 @@
     # Motor Configuration
     stepper_pulses_per_rev: 200
     stepper_microsteps: 1
-    gear_ratio: 5.0
+    gear_ratio: 20.0
 
     # CAN Bridge
     can_interface: "can0"

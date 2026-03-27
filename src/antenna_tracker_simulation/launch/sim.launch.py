@@ -12,10 +12,15 @@ def generate_launch_description():
     xacro_file = os.path.join(pkg_sim, 'urdf', 'antenna_tracker.urdf.xacro')
     world_file = os.path.join(pkg_sim, 'worlds', 'antenna_tracker.world')
     rviz_config = os.path.join(pkg_sim, 'config', 'rviz_config.rviz')
+    sim_params_file = os.path.join(pkg_sim, 'config', 'sim_params.yaml')
 
     robot_description = Command(['xacro ', xacro_file])
     use_sim_time = LaunchConfiguration('use_sim_time', default='true')
     launch_rviz = LaunchConfiguration('launch_rviz', default='true')
+    encoder_noise_deg = LaunchConfiguration('encoder_noise_deg', default='0.0')
+    velocity_noise_dps = LaunchConfiguration('velocity_noise_dps', default='0.0')
+    command_noise_hz = LaunchConfiguration('command_noise_hz', default='0.0')
+    disturbance_dps2 = LaunchConfiguration('disturbance_dps2', default='0.25')
 
     gz_env = {
         'DISPLAY': os.environ.get('DISPLAY', ':99'),
@@ -26,6 +31,10 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('use_sim_time', default_value='true'),
         DeclareLaunchArgument('launch_rviz', default_value='true'),
+        DeclareLaunchArgument('encoder_noise_deg', default_value='0.0'),
+        DeclareLaunchArgument('velocity_noise_dps', default_value='0.0'),
+        DeclareLaunchArgument('command_noise_hz', default_value='0.0'),
+        DeclareLaunchArgument('disturbance_dps2', default_value='0.25'),
 
         # Force IGN transport to use loopback (avoids multi-interface confusion in host-network Docker)
         SetEnvironmentVariable('IGN_IP', '127.0.0.1'),
@@ -75,7 +84,13 @@ def generate_launch_description():
             package='antenna_tracker_simulation',
             executable='sim_motor_bridge_node',
             name='sim_motor_bridge',
-            parameters=[{'use_sim_time': use_sim_time}],
+            parameters=[sim_params_file, {
+                'use_sim_time': use_sim_time,
+                'encoder_noise_deg': encoder_noise_deg,
+                'velocity_noise_dps': velocity_noise_dps,
+                'command_noise_hz': command_noise_hz,
+                'disturbance_dps2': disturbance_dps2,
+            }],
             output='screen'
         ),
 
@@ -94,7 +109,7 @@ def generate_launch_description():
         Node(
             package='antenna_tracker_controller',
             executable='sensor_fusion_node',
-            parameters=[{'use_sim_time': use_sim_time}],
+            parameters=[sim_params_file, {'use_sim_time': use_sim_time}],
             output='screen'
         ),
 
@@ -102,7 +117,7 @@ def generate_launch_description():
         Node(
             package='antenna_tracker_controller',
             executable='navigation_node',
-            parameters=[{'use_sim_time': use_sim_time}],
+            parameters=[sim_params_file, {'use_sim_time': use_sim_time}],
             output='screen'
         ),
 
@@ -110,7 +125,7 @@ def generate_launch_description():
         Node(
             package='antenna_tracker_controller',
             executable='controller_node',
-            parameters=[{'use_sim_time': use_sim_time}],
+            parameters=[sim_params_file, {'use_sim_time': use_sim_time}],
             output='screen'
         ),
 
@@ -118,7 +133,7 @@ def generate_launch_description():
         Node(
             package='antenna_tracker_controller',
             executable='state_machine_node',
-            parameters=[{'use_sim_time': use_sim_time}],
+            parameters=[sim_params_file, {'use_sim_time': use_sim_time}],
             output='screen'
         ),
 

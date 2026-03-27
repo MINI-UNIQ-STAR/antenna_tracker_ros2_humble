@@ -7,6 +7,7 @@ import rclpy
 from rclpy.node import Node
 from rcl_interfaces.msg import ParameterDescriptor
 from ament_index_python.packages import get_package_share_directory
+import functools
 import http.server
 import threading
 import os
@@ -23,17 +24,18 @@ class WebServerNode(Node):
         port = self.get_parameter('port').value
 
         web_root = os.path.realpath(web_root)
-        self.get_logger().info(f'GCS Web server: http://0.0.0.0:{port}')
-        self.get_logger().info(f'  Serving: {web_root}')
-
-        Handler = http.server.SimpleHTTPRequestHandler
-        os.chdir(web_root)
-        self._server = http.server.HTTPServer(('', port), Handler)
+        handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=web_root)
+        self._server = http.server.ThreadingHTTPServer(('', port), handler)
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
+        self.get_logger().info(f'GCS Web server: http://0.0.0.0:{self._server.server_port}')
+        self.get_logger().info(f'  Serving: {web_root}')
+
     def destroy_node(self):
         self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=2.0)
         super().destroy_node()
 
 

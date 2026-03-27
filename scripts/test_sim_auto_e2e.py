@@ -110,9 +110,9 @@ def spin_until(executor, predicate, timeout_sec):
 
 def main():
     parser = argparse.ArgumentParser(description='Deterministic AUTO-mode Gazebo E2E harness')
-    parser.add_argument('--timeout', type=float, default=45.0)
-    parser.add_argument('--az-tol', type=float, default=12.0)
-    parser.add_argument('--el-tol', type=float, default=12.0)
+    parser.add_argument('--timeout', type=float, default=180.0)
+    parser.add_argument('--az-tol', type=float, default=1.0)
+    parser.add_argument('--el-tol', type=float, default=1.0)
     parser.add_argument('--ground-lat', type=float, default=35.0650)
     parser.add_argument('--ground-lon', type=float, default=127.7600)
     parser.add_argument('--ground-alt', type=float, default=849.0)

@@ -26,7 +26,7 @@ def export_antenna_tracker_model() -> AcadosModel:
         az_dot,
         u_az,
         el_dot,
-        u_el - 50.0 * cs.cos(el)
+        u_el - 10.77 * cs.cos(el)
     )
 
     xdot = cs.vertcat(cs.SX.sym('az_d'), cs.SX.sym('az_dd'), cs.SX.sym('el_d'), cs.SX.sym('el_dd'))

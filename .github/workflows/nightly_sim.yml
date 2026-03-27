@@ -52,7 +52,7 @@ jobs:
           sudo ip link set up vcan0
           ip link show vcan0
 
-      - name: Nightly controller tests
+      - name: Nightly package tests
         run: |
           docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -lc "
             set -e
@@ -60,18 +60,37 @@ jobs:
             cd /ros2_ws
             source /opt/ros/humble/setup.bash
             source install/setup.bash
-            colcon test --packages-select antenna_tracker_controller
+            colcon test --packages-select \
+              antenna_tracker_controller \
+              antenna_tracker_hardware \
+              antenna_tracker_bringup \
+              antenna_tracker_simulation \
+              antenna_tracker_web
             colcon test-result --verbose
           "
 
       - name: Nightly AUTO simulation E2E
         run: |
-          docker run --rm -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -lc "
+          docker run --rm \
+            -e SIM_AUTO_TIMEOUT=300 \
+            -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -lc "
             set -e
             cd /ros2_ws
             source /opt/ros/humble/setup.bash
             source install/setup.bash
             bash /ros2_ws/scripts/test_sim_auto_e2e.sh
+          "
+
+      - name: Nightly noisy AUTO simulation E2E
+        run: |
+          docker run --rm \
+            -e SIM_AUTO_TIMEOUT=300 \
+            -v ${{ github.workspace }}:/ros2_ws antenna_tracker_env bash -lc "
+            set -e
+            cd /ros2_ws
+            source /opt/ros/humble/setup.bash
+            source install/setup.bash
+            bash /ros2_ws/scripts/test_sim_noise_e2e.sh
           "
 
       - name: Nightly long simulation regression soak

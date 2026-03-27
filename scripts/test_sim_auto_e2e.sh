@@ -59,7 +59,7 @@ source /opt/ros/humble/setup.bash
 source /ros2_ws/install/setup.bash
 set -u
 
-ros2 launch antenna_tracker_simulation sim.launch.py launch_rviz:=false >"${LAUNCH_LOG}" 2>&1 &
+ros2 launch antenna_tracker_simulation sim.launch.py launch_rviz:=false ${SIM_LAUNCH_ARGS:-} >"${LAUNCH_LOG}" 2>&1 &
 LAUNCH_PID=$!
 sleep 2
 
@@ -67,4 +67,7 @@ wait_for_service /antenna/set_mode 60
 wait_for_message /imu/raw 60 /tmp/imu_raw_auto.txt
 wait_for_message /antenna/encoder_feedback 60 /tmp/encoder_feedback_auto.txt
 
-python3 /ros2_ws/scripts/test_sim_auto_e2e.py --timeout 45 --az-tol 12 --el-tol 12
+python3 /ros2_ws/scripts/test_sim_auto_e2e.py \
+  --timeout "${SIM_AUTO_TIMEOUT:-180}" \
+  --az-tol "${SIM_AUTO_AZ_TOL:-1}" \
+  --el-tol "${SIM_AUTO_EL_TOL:-1}"

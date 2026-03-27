@@ -3,6 +3,7 @@
 
 #include <rclcpp/rclcpp.hpp>
 
+#include <antenna_tracker_hardware/can_frame_codec.hpp>
 #include <antenna_tracker_msgs/msg/balloon_telemetry.hpp>
 #include <antenna_tracker_msgs/msg/encoder_feedback.hpp>
 #include <antenna_tracker_msgs/msg/motor_command.hpp>
@@ -139,18 +140,10 @@ private:
   std::mutex data_mutex_;
 
   /* ── Partial IMU assembly (accel + gyro arrive as separate frames) ────── */
-  sensor_msgs::msg::Imu pending_imu_;
-  bool accel_ready_{false};
-  bool gyro_ready_{false};
-
-  /* ── Latest LoRa status fields (filled by 0x101, used in 0x100) ──────── */
-  float   rssi_dbm_{0.0f};
-  uint8_t link_quality_{0};
+  ImuAssemblyState imu_state_;
 
   /* ── Balloon telemetry assembly (11 CAN frames → 1 ROS2 msg) ─────────── */
-  antenna_tracker_msgs::msg::BalloonTelemetry pending_balloon_;
-  uint16_t balloon_rx_mask_{0};           // 비트마스크: 수신된 프레임 추적
-  static constexpr uint16_t BALLOON_FULL_MASK = 0x07FFu;  // 0x100~0x10A = 11 bits
+  BalloonTelemetryAssembler balloon_assembler_;
 
   /* ── STM32H7 heartbeat watchdog ───────────────────────────────────────── */
   rclcpp::Time last_heartbeat_time_;

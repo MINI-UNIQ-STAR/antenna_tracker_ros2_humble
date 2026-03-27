@@ -77,7 +77,7 @@ void MpcController::compute(
   yref[2] = el_target_rad;
   yref[3] = 0.0;
   yref[4] = 0.0;                              // u_az ref
-  yref[5] = 50.0 * std::cos(el_target_rad);  // u_el ref = gravity equilibrium at target
+  yref[5] = 10.77 * std::cos(el_target_rad);  // u_el ref = gravity equilibrium at target
 
   double yref_e[ANTENNA_TRACKER_NYN] = {0};
   yref_e[0] = az_target_rad;
@@ -107,7 +107,7 @@ void MpcController::compute(
       double el_interp = x_ws[2];
       double u_ws[ANTENNA_TRACKER_NU] = {
         0.0,
-        50.0 * std::cos(el_interp)  /* gravity equilibrium along interpolated path */
+        10.77 * std::cos(el_interp)  /* gravity equilibrium along interpolated path */
       };
       ocp_nlp_out_set(nlp_config, nlp_dims, nlp_out, nlp_in, i, "u", u_ws);
     }

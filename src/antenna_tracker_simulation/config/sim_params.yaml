@@ -1,5 +1,5 @@
 # Antenna Tracker Simulation Parameters
-# Relaxed gains for Gazebo simulation
+# NEMA23 1.8° stepper + 20:1 gearbox digital-twin defaults
 
 /**:
   ros__parameters:
@@ -18,7 +18,7 @@
     kalman_q_process: 0.01
     kalman_r_measurement: 1.0
 
-    # PID: Simulation gains (softer for Gazebo dynamics)
+    # Controller tuning for simulation
     az_pos_kp: 10.0
     az_pos_ki: 0.05
     az_pos_kd: 0.2

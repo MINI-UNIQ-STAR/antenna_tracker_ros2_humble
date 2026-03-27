@@ -2,21 +2,58 @@
 #include <antenna_tracker_msgs/msg/motor_command.hpp>
 #include <antenna_tracker_msgs/msg/encoder_feedback.hpp>
 #include <std_msgs/msg/float64.hpp>
-#include <sensor_msgs/msg/joint_state.hpp>
-#include <cmath>
-
-static constexpr double TWO_PI       = 2.0 * M_PI;
-static constexpr double DT           = 0.01;               // 100 Hz integration
-static constexpr double EL_MAX_RAD   = M_PI / 2.0;        // 90°
-/* Gravity coefficient — must match NMPC model: el_ddot = u_el - GRAVITY_COEFF * cos(el) */
-static constexpr double GRAVITY_COEFF = 50.0;              // rad/s²
-/* Viscous damping on AZ — approximates real stepper motor's near-instant stop.
- * az_ddot = u_az - AZ_DAMPING * az_vel  (time constant τ = 1/10 = 0.1 s) */
-static constexpr double AZ_DAMPING    = 10.0;              // rad/s² per rad/s
+#include "antenna_tracker_simulation/sim_motor_model.hpp"
 
 class SimMotorBridge : public rclcpp::Node {
 public:
     SimMotorBridge() : Node("sim_motor_bridge") {
+        declare_parameter<double>("stepper_pulses_per_rev", 200.0);
+        declare_parameter<double>("stepper_microsteps", 1.0);
+        declare_parameter<double>("gear_ratio", 20.0);
+        declare_parameter<double>("motor_max_speed_dps", 180.0);
+        declare_parameter<double>("motor_max_accel_dps2", 1800.0);
+        declare_parameter<double>("command_deadzone_hz", 18.0);
+        declare_parameter<double>("disturbance_dps2", 0.25);
+        declare_parameter<double>("command_noise_hz", 0.0);
+        declare_parameter<double>("encoder_noise_deg", 0.0);
+        declare_parameter<double>("velocity_noise_dps", 0.0);
+        declare_parameter<double>("gravity_coeff_rads2", 10.77);
+        declare_parameter<double>("az_damping", 10.0);
+        // 실측 하드웨어 물리 파라미터
+        declare_parameter<double>("load_mass_kg", 0.5);
+        declare_parameter<double>("arm_length_m", 0.9);
+        declare_parameter<double>("load_inertia_kgm2", 0.41);
+        declare_parameter<double>("motor_holding_torque_nm", 1.2);
+        declare_parameter<double>("gearbox_efficiency", 0.85);
+        // Backlash
+        declare_parameter<double>("az_backlash_deg", 0.8);
+        declare_parameter<double>("el_backlash_deg", 0.5);
+        // Step loss
+        declare_parameter<double>("step_loss_accel_threshold_dps2", 2232.0);
+        declare_parameter<double>("step_loss_rate", 0.002);
+
+        config_.stepper_pulses_per_rev = get_parameter("stepper_pulses_per_rev").as_double();
+        config_.stepper_microsteps = get_parameter("stepper_microsteps").as_double();
+        config_.gear_ratio = get_parameter("gear_ratio").as_double();
+        config_.motor_max_speed_dps = get_parameter("motor_max_speed_dps").as_double();
+        config_.motor_max_accel_dps2 = get_parameter("motor_max_accel_dps2").as_double();
+        config_.command_deadzone_hz = get_parameter("command_deadzone_hz").as_double();
+        config_.disturbance_dps2 = get_parameter("disturbance_dps2").as_double();
+        config_.command_frequency_noise_hz = get_parameter("command_noise_hz").as_double();
+        config_.encoder_angle_noise_deg = get_parameter("encoder_noise_deg").as_double();
+        config_.encoder_velocity_noise_dps = get_parameter("velocity_noise_dps").as_double();
+        config_.gravity_coeff_rads2 = get_parameter("gravity_coeff_rads2").as_double();
+        config_.az_damping = get_parameter("az_damping").as_double();
+        config_.load_mass_kg = get_parameter("load_mass_kg").as_double();
+        config_.arm_length_m = get_parameter("arm_length_m").as_double();
+        config_.load_inertia_kgm2 = get_parameter("load_inertia_kgm2").as_double();
+        config_.motor_holding_torque_nm = get_parameter("motor_holding_torque_nm").as_double();
+        config_.gearbox_efficiency = get_parameter("gearbox_efficiency").as_double();
+        config_.az_backlash_deg = get_parameter("az_backlash_deg").as_double();
+        config_.el_backlash_deg = get_parameter("el_backlash_deg").as_double();
+        config_.step_loss_accel_threshold_dps2 = get_parameter("step_loss_accel_threshold_dps2").as_double();
+        config_.step_loss_rate = get_parameter("step_loss_rate").as_double();
+
         sub_cmd_ = this->create_subscription<antenna_tracker_msgs::msg::MotorCommand>(
             "/antenna/motor_cmd", rclcpp::SensorDataQoS(),
             std::bind(&SimMotorBridge::cmd_callback, this, std::placeholders::_1));
@@ -35,63 +72,29 @@ public:
             std::bind(&SimMotorBridge::integrate_and_publish, this));
 
         RCLCPP_INFO(this->get_logger(),
-            "SimMotorBridge ready — double-integrator + gravity (%.0f rad/s²) @ 100 Hz",
-            GRAVITY_COEFF);
+            "SimMotorBridge ready — NEMA23 twin, 200 steps/rev, gear %.1f:1, noise(cmd=%.2fHz, enc=%.2fdeg)",
+            config_.gear_ratio, config_.command_frequency_noise_hz, config_.encoder_angle_noise_deg);
     }
 
 private:
     void cmd_callback(const antenna_tracker_msgs::msg::MotorCommand::SharedPtr msg) {
-        if (msg->emergency_stop) {
-            az_acc_rads2_ = 0.0;
-            el_acc_rads2_ = 0.0;
-            return;
-        }
-
-        /* NMPC outputs angular acceleration (rad/s²) via frequency_hz field.
-         * Do NOT scale by RAD_PER_STEP — the value is already in rad/s². */
-        az_acc_rads2_ = msg->az_frequency_hz * (msg->az_direction ? 1.0 : -1.0);
-        el_acc_rads2_ = msg->el_frequency_hz * (msg->el_direction ? 1.0 : -1.0);
+        antenna_tracker_simulation::apply_motor_command(*msg, state_);
     }
 
     void integrate_and_publish() {
-        /* AZ: double integrator + viscous damping — az_ddot = u_az - AZ_DAMPING * az_vel
-         * Damping approximates real stepper motor's near-instant stop when cmd=0. */
-        az_vel_rps_ += (az_acc_rads2_ - AZ_DAMPING * az_vel_rps_) * DT;
-        az_pos_rad_ += az_vel_rps_ * DT;
-        az_pos_rad_ = std::fmod(az_pos_rad_, TWO_PI);
-        if (az_pos_rad_ < 0.0) az_pos_rad_ += TWO_PI;
-
-        /* EL: double integrator with gravity — el_ddot = u_el - GRAVITY_COEFF * cos(el)
-         * Matches NMPC model exactly. Without motor input (u_el=0), antenna droops. */
-        el_vel_rps_ += (el_acc_rads2_ - GRAVITY_COEFF * std::cos(el_pos_rad_)) * DT;
-        el_pos_rad_ += el_vel_rps_ * DT;
-        el_pos_rad_ = std::max(0.0, std::min(EL_MAX_RAD, el_pos_rad_));
-
-        /* Clamp velocity at hard limits */
-        if ((el_pos_rad_ <= 0.0 && el_vel_rps_ < 0.0) ||
-            (el_pos_rad_ >= EL_MAX_RAD && el_vel_rps_ > 0.0)) {
-            el_vel_rps_ = 0.0;
-        }
+        const auto step = antenna_tracker_simulation::step_sim_motor_model(state_, config_);
 
         /* Forward velocity to Gazebo for visualisation */
         std_msgs::msg::Float64 az_vel_msg, el_vel_msg;
-        az_vel_msg.data = az_vel_rps_;
-        el_vel_msg.data = el_vel_rps_;
+        az_vel_msg.data = step.az_velocity_command_rps;
+        el_vel_msg.data = step.el_velocity_command_rps;
         pub_az_->publish(az_vel_msg);
         pub_el_->publish(el_vel_msg);
 
         /* Publish encoder feedback */
-        antenna_tracker_msgs::msg::EncoderFeedback feedback;
+        auto feedback = step.feedback;
         feedback.header.stamp = this->now();
         feedback.header.frame_id = "base_link";
-
-        feedback.az_angle_deg    = az_pos_rad_ * 180.0 / M_PI;
-        feedback.el_angle_deg    = el_pos_rad_ * 180.0 / M_PI;
-        feedback.az_velocity_dps = az_vel_rps_ * 180.0 / M_PI;
-        feedback.el_velocity_dps = el_vel_rps_ * 180.0 / M_PI;
-        feedback.az_valid = true;
-        feedback.el_valid = true;
-
         pub_encoder_->publish(feedback);
     }
 
@@ -103,12 +106,8 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
 
     // State
-    double az_pos_rad_{0.0};    // current azimuth position (rad)
-    double el_pos_rad_{0.0};    // current elevation position (rad)
-    double az_vel_rps_{0.0};    // azimuth velocity (rad/s)
-    double el_vel_rps_{0.0};    // elevation velocity (rad/s)
-    double az_acc_rads2_{0.0};  // commanded AZ angular acceleration (rad/s²)
-    double el_acc_rads2_{0.0};  // commanded EL angular acceleration (rad/s²)
+    antenna_tracker_simulation::SimMotorConfig config_;
+    antenna_tracker_simulation::SimMotorState state_;
 };
 
 int main(int argc, char **argv) {

@@ -232,7 +232,7 @@ void ControllerNode::control_timer_callback()
 
   /* AZ deadband: suppress tiny commands near target (no gravity on AZ axis).
    * EL deadband removed: double-integrator + gravity needs continuous control;
-   * NMPC naturally provides gravity equilibrium (u_el ≈ 50*cos(el)) at steady state. */
+   * NMPC naturally provides gravity equilibrium (u_el ≈ 10.77*cos(el)) at steady state. */
   static constexpr double AZ_DEADBAND_DEG = 0.5;
   if (std::abs(az_error_raw) < AZ_DEADBAND_DEG) az_cmd = 0.0;
 
