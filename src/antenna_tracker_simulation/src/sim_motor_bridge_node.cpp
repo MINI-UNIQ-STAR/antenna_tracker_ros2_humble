@@ -7,6 +7,7 @@
 class SimMotorBridge : public rclcpp::Node {
 public:
     SimMotorBridge() : Node("sim_motor_bridge") {
+        declare_parameter<double>("loop_rate_hz", 100.0);
         declare_parameter<double>("stepper_pulses_per_rev", 200.0);
         declare_parameter<double>("stepper_microsteps", 1.0);
         declare_parameter<double>("gear_ratio", 20.0);
@@ -66,9 +67,10 @@ public:
         pub_encoder_ = this->create_publisher<antenna_tracker_msgs::msg::EncoderFeedback>(
             "/antenna/encoder_feedback", 10);
 
-        // 100 Hz double-integrator timer: acc → vel → pos
+        double loop_rate = get_parameter("loop_rate_hz").as_double();
+        auto period = std::chrono::duration<double>(1.0 / loop_rate);
         timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(10),
+            std::chrono::duration_cast<std::chrono::nanoseconds>(period),
             std::bind(&SimMotorBridge::integrate_and_publish, this));
 
         RCLCPP_INFO(this->get_logger(),

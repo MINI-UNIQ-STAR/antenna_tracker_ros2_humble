@@ -11,7 +11,8 @@ class KalmanFilterAzEl
 public:
   KalmanFilterAzEl();
 
-  void init(double dt, double q_process = 0.001, double r_measurement = 2.0);
+  void init(double dt, double q_process = 0.001, double r_measurement = 2.0,
+            double q_vel_multiplier = 10.0);
   void update(double az_meas, double el_meas);
 
   double azimuth() const { return state_[0]; }

@@ -10,19 +10,21 @@ SensorFusionNode::SensorFusionNode(const rclcpp::NodeOptions & options)
   declare_parameter<double>("mag_declination_deg", -8.0);
   declare_parameter<double>("kalman_q_process", 0.001);
   declare_parameter<double>("kalman_r_measurement", 2.0);
+  declare_parameter<double>("kalman_q_vel_multiplier", 10.0);
   declare_parameter<double>("loop_rate_hz", 100.0);
 
   double alpha = get_parameter("complementary_alpha").as_double();
   double declination = get_parameter("mag_declination_deg").as_double();
   double kf_q = get_parameter("kalman_q_process").as_double();
   double kf_r = get_parameter("kalman_r_measurement").as_double();
+  double kf_q_vel_mult = get_parameter("kalman_q_vel_multiplier").as_double();
   double loop_rate = get_parameter("loop_rate_hz").as_double();
 
   comp_filter_.set_alpha(alpha);
   comp_filter_.set_declination(declination);
 
   double dt = 1.0 / loop_rate;
-  kalman_filter_.init(dt, kf_q, kf_r);
+  kalman_filter_.init(dt, kf_q, kf_r, kf_q_vel_mult);
 
   sub_imu_ = create_subscription<sensor_msgs::msg::Imu>(
     "/imu/raw", rclcpp::SensorDataQoS(),
@@ -128,13 +130,14 @@ void SensorFusionNode::timer_callback()
     mag_z = local_mag->magnetic_field.z * 1e6;
   }
 
+  static constexpr double kRadToDeg = 180.0 / M_PI;
   comp_filter_.update(
     local_imu->linear_acceleration.x,
     local_imu->linear_acceleration.y,
     local_imu->linear_acceleration.z,
-    local_imu->angular_velocity.x * 57.29577951,
-    local_imu->angular_velocity.y * 57.29577951,
-    local_imu->angular_velocity.z * 57.29577951,
+    local_imu->angular_velocity.x * kRadToDeg,
+    local_imu->angular_velocity.y * kRadToDeg,
+    local_imu->angular_velocity.z * kRadToDeg,
     mag_x, mag_y, mag_z,
     timestamp);
 

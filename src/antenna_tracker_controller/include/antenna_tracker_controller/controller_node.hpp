@@ -67,6 +67,7 @@ private:
   double az_max_{360.0};
   double el_min_{0.0};
   double el_max_{90.0};
+  double az_deadband_deg_{0.5};
 
   /* Thread safety — protects all shared state including active_goal_ */
   std::mutex state_mutex_;

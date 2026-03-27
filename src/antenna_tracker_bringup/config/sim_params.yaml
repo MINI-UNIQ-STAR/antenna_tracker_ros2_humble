@@ -17,6 +17,10 @@
     mag_declination_deg: -8.0
     kalman_q_process: 0.01
     kalman_r_measurement: 1.0
+    kalman_q_vel_multiplier: 10.0     # Q_vel = kalman_q_process * this
+
+    # AZ deadband (suppresses noise near target; no gravity on AZ axis)
+    az_deadband_deg: 0.5
 
     # PID: Simulation gains (softer for Gazebo dynamics)
     az_pos_kp: 10.0

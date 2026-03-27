@@ -26,6 +26,7 @@ ControllerNode::ControllerNode(const rclcpp::NodeOptions & options)
   declare_parameter<double>("azimuth_max_deg", 360.0);
   declare_parameter<double>("elevation_min_deg", 0.0);
   declare_parameter<double>("elevation_max_deg", 90.0);
+  declare_parameter<double>("az_deadband_deg", 0.5);
 
   double loop_rate = get_parameter("loop_rate_hz").as_double();
   double dt = 1.0 / loop_rate;
@@ -35,6 +36,7 @@ ControllerNode::ControllerNode(const rclcpp::NodeOptions & options)
   az_max_ = get_parameter("azimuth_max_deg").as_double();
   el_min_ = get_parameter("elevation_min_deg").as_double();
   el_max_ = get_parameter("elevation_max_deg").as_double();
+  az_deadband_deg_ = get_parameter("az_deadband_deg").as_double();
 
   /* Update cache when parameters change at runtime */
   param_cb_handle_ = add_on_set_parameters_callback(
@@ -47,6 +49,7 @@ ControllerNode::ControllerNode(const rclcpp::NodeOptions & options)
         else if (p.get_name() == "azimuth_max_deg")  { az_max_ = p.as_double(); }
         else if (p.get_name() == "elevation_min_deg") { el_min_ = p.as_double(); }
         else if (p.get_name() == "elevation_max_deg") { el_max_ = p.as_double(); }
+        else if (p.get_name() == "az_deadband_deg") { az_deadband_deg_ = p.as_double(); }
       }
       return result;
     });
@@ -233,8 +236,7 @@ void ControllerNode::control_timer_callback()
   /* AZ deadband: suppress tiny commands near target (no gravity on AZ axis).
    * EL deadband removed: double-integrator + gravity needs continuous control;
    * NMPC naturally provides gravity equilibrium (u_el ≈ 10.77*cos(el)) at steady state. */
-  static constexpr double AZ_DEADBAND_DEG = 0.5;
-  if (std::abs(az_error_raw) < AZ_DEADBAND_DEG) az_cmd = 0.0;
+  if (std::abs(az_error_raw) < az_deadband_deg_) az_cmd = 0.0;
 
   /* Publish motor command */
   auto motor_msg = antenna_tracker_msgs::msg::MotorCommand();

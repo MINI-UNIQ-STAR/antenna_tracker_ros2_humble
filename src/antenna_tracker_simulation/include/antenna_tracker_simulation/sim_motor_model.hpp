@@ -1,15 +1,16 @@
 #ifndef ANTENNA_TRACKER_SIMULATION__SIM_MOTOR_MODEL_HPP_
 #define ANTENNA_TRACKER_SIMULATION__SIM_MOTOR_MODEL_HPP_
 
+#include <cmath>
 #include <antenna_tracker_msgs/msg/encoder_feedback.hpp>
 #include <antenna_tracker_msgs/msg/motor_command.hpp>
 
 namespace antenna_tracker_simulation
 {
 
-inline constexpr double kTwoPi = 2.0 * 3.14159265358979323846;
+inline constexpr double kTwoPi = 2.0 * M_PI;
 inline constexpr double kDefaultStepSeconds = 0.01;
-inline constexpr double kElevationMaxRadians = 3.14159265358979323846 / 2.0;
+inline constexpr double kElevationMaxRadians = M_PI / 2.0;
 
 struct SimMotorConfig
 {

@@ -45,7 +45,16 @@ class DualAxisCascadePid
 public:
   DualAxisCascadePid();
 
+  /// Initialize with default gains (backward-compatible; useful for tests).
   void init(double dt);
+
+  /// Initialize with explicit gains loaded from configuration (preferred).
+  void init(double dt,
+            PidGains az_outer, PidGains az_inner,
+            PidGains el_outer, PidGains el_inner,
+            double az_out_min = -800.0, double az_out_max = 800.0,
+            double el_out_min = -800.0, double el_out_max = 800.0);
+
   void compute(
     double az_target, double az_current, double az_vel,
     double el_target, double el_current, double el_vel,
@@ -61,6 +70,15 @@ private:
   CascadePid azimuth_;
   CascadePid elevation_;
   double dt_;
+  double az_out_min_{-800.0};
+  double az_out_max_{ 800.0};
+  double el_out_min_{-800.0};
+  double el_out_max_{ 800.0};
+  // Stored gains — used by set_*_gains() to preserve the companion loop
+  PidGains az_outer_gains_;
+  PidGains az_inner_gains_;
+  PidGains el_outer_gains_;
+  PidGains el_inner_gains_;
 };
 
 }  // namespace antenna_tracker_controller

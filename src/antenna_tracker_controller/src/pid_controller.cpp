@@ -86,23 +86,40 @@ double CascadePid::clamp(double value, double min_val, double max_val)
 /* DualAxisCascadePid */
 
 DualAxisCascadePid::DualAxisCascadePid()
-: dt_(0.01)
+: dt_(0.01),
+  /* Default gains — tuned for NEMA23 stepper integration model */
+  az_outer_gains_{5.0, 0.0, 0.1},
+  az_inner_gains_{1.5, 0.01, 0.05},
+  el_outer_gains_{3.0, 0.0, 0.1},
+  el_inner_gains_{2.0, 0.01, 0.02}
 {
 }
 
 void DualAxisCascadePid::init(double dt)
 {
   dt_ = dt;
+  azimuth_.init(az_outer_gains_, az_inner_gains_, dt_, az_out_min_, az_out_max_);
+  elevation_.init(el_outer_gains_, el_inner_gains_, dt_, el_out_min_, el_out_max_);
+}
 
-  /* Azimuth — tuned for open-loop stepper integration model */
-  PidGains az_outer{5.0, 0.0, 0.1};
-  PidGains az_inner{1.5, 0.01, 0.05};
-  azimuth_.init(az_outer, az_inner, dt, -800.0, 800.0);
-
-  /* Elevation — lower gains, no integral windup at limits */
-  PidGains el_outer{3.0, 0.0, 0.1};
-  PidGains el_inner{2.0, 0.01, 0.02};
-  elevation_.init(el_outer, el_inner, dt, -800.0, 800.0);
+void DualAxisCascadePid::init(
+  double dt,
+  PidGains az_outer, PidGains az_inner,
+  PidGains el_outer, PidGains el_inner,
+  double az_out_min, double az_out_max,
+  double el_out_min, double el_out_max)
+{
+  dt_ = dt;
+  az_outer_gains_ = az_outer;
+  az_inner_gains_ = az_inner;
+  el_outer_gains_ = el_outer;
+  el_inner_gains_ = el_inner;
+  az_out_min_ = az_out_min;
+  az_out_max_ = az_out_max;
+  el_out_min_ = el_out_min;
+  el_out_max_ = el_out_max;
+  azimuth_.init(az_outer_gains_, az_inner_gains_, dt_, az_out_min_, az_out_max_);
+  elevation_.init(el_outer_gains_, el_inner_gains_, dt_, el_out_min_, el_out_max_);
 }
 
 void DualAxisCascadePid::compute(
@@ -122,26 +139,26 @@ void DualAxisCascadePid::reset()
 
 void DualAxisCascadePid::set_az_position_gains(const PidGains & gains)
 {
-  PidGains inner{4.0, 0.05, 0.1};
-  azimuth_.init(gains, inner, dt_, -1000.0, 1000.0);
+  az_outer_gains_ = gains;
+  azimuth_.init(az_outer_gains_, az_inner_gains_, dt_, az_out_min_, az_out_max_);
 }
 
 void DualAxisCascadePid::set_az_velocity_gains(const PidGains & gains)
 {
-  PidGains outer{15.0, 0.1, 0.3};
-  azimuth_.init(outer, gains, dt_, -1000.0, 1000.0);
+  az_inner_gains_ = gains;
+  azimuth_.init(az_outer_gains_, az_inner_gains_, dt_, az_out_min_, az_out_max_);
 }
 
 void DualAxisCascadePid::set_el_position_gains(const PidGains & gains)
 {
-  PidGains inner{5.0, 0.15, 0.08};
-  elevation_.init(gains, inner, dt_, -1000.0, 1000.0);
+  el_outer_gains_ = gains;
+  elevation_.init(el_outer_gains_, el_inner_gains_, dt_, el_out_min_, el_out_max_);
 }
 
 void DualAxisCascadePid::set_el_velocity_gains(const PidGains & gains)
 {
-  PidGains outer{8.0, 1.0, 0.2};
-  elevation_.init(outer, gains, dt_, -1000.0, 1000.0);
+  el_inner_gains_ = gains;
+  elevation_.init(el_outer_gains_, el_inner_gains_, dt_, el_out_min_, el_out_max_);
 }
 
 }  // namespace antenna_tracker_controller

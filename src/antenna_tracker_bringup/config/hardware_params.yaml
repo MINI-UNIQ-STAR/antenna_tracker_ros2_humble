@@ -16,6 +16,10 @@
     mag_declination_deg: -8.0
     kalman_q_process: 0.001
     kalman_r_measurement: 2.0
+    kalman_q_vel_multiplier: 10.0     # Q_vel = kalman_q_process * this
+
+    # AZ deadband (suppresses noise near target; no gravity on AZ axis)
+    az_deadband_deg: 0.5
 
     # PID: Azimuth Position (Outer Loop)
     az_pos_kp: 15.0
