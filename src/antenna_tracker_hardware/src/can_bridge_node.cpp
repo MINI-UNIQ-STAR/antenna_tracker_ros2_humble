@@ -377,12 +377,9 @@ void CanBridgeNode::try_publish_balloon_telemetry()
     return;
   }
 
-  pending_balloon_.header.stamp    = now();
-  pending_balloon_.header.frame_id = "balloon";
-  pub_balloon_telem_->publish(pending_balloon_);
-
-  balloon_rx_mask_ = 0;
-  pending_balloon_ = antenna_tracker_msgs::msg::BalloonTelemetry{};  // 다음 세트를 위해 stale 필드 초기화
+  msg->header.stamp = now();
+  msg->header.frame_id = "balloon";
+  pub_balloon_telem_->publish(*msg);
 }
 
 }  // namespace antenna_tracker_hardware
