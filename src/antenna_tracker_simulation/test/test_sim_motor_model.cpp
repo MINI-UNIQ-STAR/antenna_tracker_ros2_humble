@@ -318,4 +318,23 @@ TEST(SimMotorModelTest, DeterministicNoisePerturbsFeedbackButKeepsBounds)
   EXPECT_LE(noisy_step.feedback.el_angle_deg, 90.0);
 }
 
+TEST(SimMotorModelTest, DefaultConfigMatchesMeasuredHardwareParams)
+{
+  // 실측 하드웨어: NEMA23 1.2Nm + 20:1 기어박스(500g) + 야기안테나 500g @0.9m
+  // 이 기본값이 변경되면 시뮬레이션이 실제 하드웨어와 달라짐
+  SimMotorConfig config;
+
+  EXPECT_DOUBLE_EQ(config.gravity_coeff_rads2, 10.77);
+  EXPECT_DOUBLE_EQ(config.motor_max_accel_dps2, 1800.0);
+  EXPECT_DOUBLE_EQ(config.az_backlash_deg, 0.8);
+  EXPECT_DOUBLE_EQ(config.el_backlash_deg, 0.5);
+  EXPECT_DOUBLE_EQ(config.step_loss_accel_threshold_dps2, 2232.0);
+  EXPECT_DOUBLE_EQ(config.step_loss_rate, 0.002);
+  EXPECT_DOUBLE_EQ(config.load_mass_kg, 0.5);
+  EXPECT_DOUBLE_EQ(config.arm_length_m, 0.9);
+  EXPECT_DOUBLE_EQ(config.load_inertia_kgm2, 0.41);
+  EXPECT_DOUBLE_EQ(config.motor_holding_torque_nm, 1.2);
+  EXPECT_DOUBLE_EQ(config.gearbox_efficiency, 0.85);
+}
+
 }  // namespace antenna_tracker_simulation

@@ -28,6 +28,10 @@ public:
 
   void set_mpc_to_hz_scale(double scale) { mpc_to_hz_scale_ = scale; }
 
+  /// Gravity equilibrium feedforward coefficient (measured: NEMA23 + 20:1 + 500g Yagi @0.9m)
+  /// u_el_eq = kGravityCoeff * cos(el)  [rad/s²]
+  static constexpr double kGravityCoeff = 10.77;
+
 private:
   antenna_tracker_solver_capsule * acados_capsule_;
   double mpc_to_hz_scale_{1.0};  ///< conversion: solver rad/s² → stepper Hz

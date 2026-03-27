@@ -57,6 +57,38 @@ TEST(MpcControllerTest, OutputScaleAppliesAfterSolve) {
   EXPECT_NEAR(scaled_el, baseline_el * 2.0, std::abs(baseline_el) * 1e-6 + 1e-6);
 }
 
+TEST(MpcControllerTest, GravityCoeffIsCorrectPhysicsValue) {
+  // 실측 파라미터: NEMA23 1.2Nm + 20:1 기어박스 + 500g 야기 @0.9m
+  // J=0.41 kg·m², gravity_coeff = 4.42 Nm / 0.41 kg·m² = 10.77 rad/s²
+  // 이 값이 50.0으로 회귀하면 NMPC 예측 오차 5배 → 수렴 실패
+  EXPECT_DOUBLE_EQ(MpcController::kGravityCoeff, 10.77);
+}
+
+TEST(MpcControllerTest, GravityFeedforwardRatioFollowsCosine) {
+  // el=0° 시 gravity feedforward = kGravityCoeff * cos(0°) = kGravityCoeff
+  // el=60° 시 gravity feedforward = kGravityCoeff * cos(60°) = kGravityCoeff * 0.5
+  // 동일 위치(오차=0) 에서 두 고각의 출력 비율 ≈ cos(0°)/cos(60°) = 2.0
+  MpcController mpc;
+  mpc.init();
+  if (!mpc.is_initialized()) {
+    GTEST_SKIP() << "acados capsule not available";
+  }
+
+  // compute(az_target, az_current, az_vel, el_target, el_current, el_vel, ...)
+  double az_out = 0.0, el_out_0 = 0.0;
+  mpc.compute(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, az_out, el_out_0);   // el=0°, 오차=0
+
+  az_out = 0.0;
+  double el_out_60 = 0.0;
+  mpc.compute(0.0, 0.0, 0.0, 60.0, 60.0, 0.0, az_out, el_out_60); // el=60°, 오차=0
+
+  ASSERT_NE(el_out_60, 0.0) << "el output at 60° should be non-zero (gravity compensation)";
+
+  const double ratio = el_out_0 / el_out_60;
+  // cos(0°)/cos(60°) = 2.0 — 허용 오차 10% (solver 수치 오차 포함)
+  EXPECT_NEAR(ratio, 2.0, 0.2);
+}
+
 int main(int argc, char **argv) {
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
