@@ -2,6 +2,10 @@
 
 #include "antenna_tracker_simulation/sim_motor_model.hpp"
 
+// NOTE: CAN delay/drop simulation (can_delay_ms, can_drop_rate) is implemented
+// at the ROS2 node layer (SimMotorBridge) and is validated via E2E tests.
+// The tests below cover the underlying sim_motor_model physics only.
+
 namespace antenna_tracker_simulation
 {
 
@@ -335,6 +339,210 @@ TEST(SimMotorModelTest, DefaultConfigMatchesMeasuredHardwareParams)
   EXPECT_DOUBLE_EQ(config.load_inertia_kgm2, 0.41);
   EXPECT_DOUBLE_EQ(config.motor_holding_torque_nm, 1.2);
   EXPECT_DOUBLE_EQ(config.gearbox_efficiency, 0.85);
+}
+
+TEST(SimMotorModelTest, NoCandropNoCandDelayPassesCommandThrough) {
+  // Verify that with no delay/drop, a large command is applied immediately.
+  // This is the existing behavior — regression guard.
+  SimMotorConfig config;
+  SimMotorState state;
+
+  antenna_tracker_msgs::msg::MotorCommand cmd;
+  cmd.az_frequency_hz = 500.0;
+  cmd.el_frequency_hz = 300.0;
+  cmd.az_direction = true;
+  cmd.el_direction = true;
+  cmd.emergency_stop = false;
+
+  apply_motor_command(cmd, state);
+
+  EXPECT_NEAR(state.az_command_hz,  500.0, 1e-9);
+  EXPECT_NEAR(state.el_command_hz,  300.0, 1e-9);
+}
+
+TEST(SimMotorModelTest, BacklashAsymmetricFwdLargerThanRev)
+{
+  // BL-1: az_backlash_fwd_deg(1.5) > az_backlash_rev_deg(0.3)
+  // 양방향 각각 소진 후 fwd 방향이 더 긴 dead zone을 가짐
+  auto make_config = [](double fwd, double rev) {
+    SimMotorConfig c;
+    c.command_deadzone_hz = 0.0;
+    c.command_frequency_noise_hz = 0.0;
+    c.encoder_angle_noise_deg = 0.0;
+    c.encoder_velocity_noise_dps = 0.0;
+    c.disturbance_dps2 = 0.0;
+    c.gravity_coeff_rads2 = 0.0;
+    c.az_damping = 0.0;
+    c.az_backlash_deg = 0.8;        // symmetric fallback (불사용)
+    c.az_backlash_fwd_deg = fwd;
+    c.az_backlash_rev_deg = rev;
+    c.az_backlash_variance_deg = 0.0;
+    c.el_backlash_deg = 0.0;
+    c.step_loss_accel_threshold_dps2 = 9999.0;
+    return c;
+  };
+
+  // fwd 방향(양속도)으로 이동 후 방향 전환 — dead zone 스텝 수 측정
+  auto count_frozen_steps = [&](double fwd_deg, double rev_deg, double vel) -> int {
+    SimMotorConfig cfg = make_config(fwd_deg, rev_deg);
+    SimMotorState s;
+    s.az_vel_rps = -vel;  // 먼저 반대 방향으로 백래시 소진
+    for (int i = 0; i < 200; ++i) step_sim_motor_model(s, cfg);
+    // 방향 전환
+    s.az_vel_rps = vel;
+    const double pos0 = s.az_pos_rad;
+    int frozen = 0;
+    for (int i = 0; i < 200; ++i) {
+      step_sim_motor_model(s, cfg);
+      const double delta = std::abs(s.az_pos_rad - pos0);
+      if (delta < 1e-9) ++frozen;
+      else break;
+    }
+    return frozen;
+  };
+
+  const int fwd_frozen = count_frozen_steps(1.5, 0.3, 0.5);
+  const int rev_frozen = count_frozen_steps(0.3, 1.5, 0.5);
+
+  // fwd(1.5°) 방향 전환 시 dead zone이 rev(0.3°)보다 길어야 함
+  EXPECT_GT(fwd_frozen, rev_frozen);
+}
+
+TEST(SimMotorModelTest, BacklashVarianceCausesPerReversalVariation)
+{
+  // BL-2: variance > 0 이면 연속 방향 전환마다 dead zone 크기가 달라짐
+  SimMotorConfig config;
+  config.command_deadzone_hz = 0.0;
+  config.command_frequency_noise_hz = 0.0;
+  config.encoder_angle_noise_deg = 0.0;
+  config.encoder_velocity_noise_dps = 0.0;
+  config.disturbance_dps2 = 0.0;
+  config.gravity_coeff_rads2 = 0.0;
+  config.az_damping = 0.0;
+  config.az_backlash_deg = 0.5;
+  config.az_backlash_variance_deg = 0.3;  // 높은 분산 → 각 전환마다 변동
+  config.el_backlash_deg = 0.0;
+  config.step_loss_accel_threshold_dps2 = 9999.0;
+
+  SimMotorState state;
+  state.rng = std::mt19937{12345};  // 고정 seed로 재현 가능
+
+  // 여러 번 방향 전환 후 current_limit_rad 값이 변하는지 확인
+  std::vector<double> limits;
+  for (int rev = 0; rev < 6; ++rev) {
+    const double vel = (rev % 2 == 0) ? 0.5 : -0.5;
+    state.az_vel_rps = vel;
+    for (int i = 0; i < 50; ++i) step_sim_motor_model(state, config);
+    limits.push_back(state.az_backlash_current_limit_rad);
+  }
+
+  // 최소 하나의 전환에서 다른 limit이 샘플링되어야 함
+  const double first = limits.front();
+  bool any_different = false;
+  for (size_t i = 1; i < limits.size(); ++i) {
+    if (std::abs(limits[i] - first) > 1e-9) {
+      any_different = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(any_different);
+}
+
+TEST(SimMotorModelTest, BacklashSymmetricCompatibilityWithZeroAsymmetric)
+{
+  // BL-3: fwd=0, rev=0 → symmetric az_backlash_deg 폴백 → AC-3/AC-4와 동일 동작
+  SimMotorConfig config;
+  config.command_deadzone_hz = 0.0;
+  config.command_frequency_noise_hz = 0.0;
+  config.encoder_angle_noise_deg = 0.0;
+  config.encoder_velocity_noise_dps = 0.0;
+  config.disturbance_dps2 = 0.0;
+  config.gravity_coeff_rads2 = 0.0;
+  config.az_damping = 0.0;
+  config.az_backlash_deg = 0.8;
+  config.az_backlash_fwd_deg = 0.0;  // 폴백 → 0.8° 사용
+  config.az_backlash_rev_deg = 0.0;
+  config.az_backlash_variance_deg = 0.0;
+  config.el_backlash_deg = 0.0;
+  config.step_loss_accel_threshold_dps2 = 9999.0;
+
+  SimMotorState state;
+  state.az_vel_rps = 0.5;
+  for (int i = 0; i < 100; ++i) step_sim_motor_model(state, config);
+
+  state.az_vel_rps = -0.5;
+  const double pos_before = state.az_pos_rad;
+  for (int i = 0; i < 3; ++i) step_sim_motor_model(state, config);
+
+  const double delta_deg =
+    std::abs((state.az_pos_rad - pos_before) * 180.0 / M_PI);
+  EXPECT_LT(delta_deg, 0.01);  // AC-3과 동일 기준
+}
+
+TEST(SimMotorModelTest, StepLossRecoveryExponentialDecay)
+{
+  // SL-1/SL-2: recovery_rate > 0 시 정지 구간에서 step error 지수 감소
+  SimMotorConfig config;
+  config.command_deadzone_hz = 0.0;
+  config.command_frequency_noise_hz = 0.0;
+  config.encoder_angle_noise_deg = 0.0;
+  config.encoder_velocity_noise_dps = 0.0;
+  config.disturbance_dps2 = 0.0;
+  config.gravity_coeff_rads2 = 0.0;
+  config.az_damping = 0.0;
+  config.az_backlash_deg = 0.0;
+  config.el_backlash_deg = 0.0;
+  config.motor_max_accel_dps2 = 9999.0;
+  config.step_loss_accel_threshold_dps2 = 500.0;  // 낮은 threshold → 쉽게 탈조
+  config.step_loss_rate = 0.01;
+  config.step_loss_recovery_rate = 5.0;  // 1/s: ~0.2s 후 거의 소멸
+
+  SimMotorState state;
+  // 탈조 발생
+  state.az_command_hz = 3000.0;
+  for (int i = 0; i < 20; ++i) step_sim_motor_model(state, config);
+  const double error_after_loss = std::abs(state.az_step_error_rad);
+  ASSERT_GT(error_after_loss, 0.0);
+
+  // 명령 정지 → recovery만 작동
+  state.az_command_hz = 0.0;
+  for (int i = 0; i < 50; ++i) step_sim_motor_model(state, config);  // 0.5s
+  const double error_after_recovery = std::abs(state.az_step_error_rad);
+
+  // 복원 후 오차가 줄어야 함
+  EXPECT_LT(error_after_recovery, error_after_loss);
+  // 복원식 검증: error * exp(-5.0 * 0.5) = error * ~0.082 → 90% 이상 감소
+  EXPECT_LT(error_after_recovery, error_after_loss * 0.15);
+}
+
+TEST(SimMotorModelTest, StepLossRecoveryZeroPreservesExistingBehavior)
+{
+  // SL-3: recovery_rate=0.0 → AC-5/AC-6 완전 보존
+  SimMotorConfig config;
+  config.command_deadzone_hz = 0.0;
+  config.command_frequency_noise_hz = 0.0;
+  config.encoder_angle_noise_deg = 0.0;
+  config.encoder_velocity_noise_dps = 0.0;
+  config.disturbance_dps2 = 0.0;
+  config.gravity_coeff_rads2 = 0.0;
+  config.az_damping = 0.0;
+  config.az_backlash_deg = 0.0;
+  config.el_backlash_deg = 0.0;
+  config.motor_max_accel_dps2 = 9999.0;
+  config.step_loss_accel_threshold_dps2 = 500.0;
+  config.step_loss_rate = 0.01;
+  config.step_loss_recovery_rate = 0.0;  // 복원 없음
+
+  SimMotorState state;
+  state.az_command_hz = 3000.0;
+  for (int i = 0; i < 20; ++i) step_sim_motor_model(state, config);
+  const double error_with_loss = std::abs(state.az_step_error_rad);
+  ASSERT_GT(error_with_loss, 0.0);
+
+  // 명령 정지 후에도 오차 유지 (복원 없음)
+  state.az_command_hz = 0.0;
+  for (int i = 0; i < 100; ++i) step_sim_motor_model(state, config);
+  EXPECT_NEAR(std::abs(state.az_step_error_rad), error_with_loss, 1e-12);
 }
 
 }  // namespace antenna_tracker_simulation

@@ -10,12 +10,12 @@ namespace
 
 double deg_to_rad(double degrees)
 {
-  return degrees * 3.14159265358979323846 / 180.0;
+  return degrees * M_PI / 180.0;
 }
 
 double rad_to_deg(double radians)
 {
-  return radians * 180.0 / 3.14159265358979323846;
+  return radians * 180.0 / M_PI;
 }
 
 double clamp_abs(double value, double limit)
@@ -33,13 +33,19 @@ double normalize_azimuth_deg(double degrees)
 }
 
 // Returns actual position displacement after backlash dead zone.
-// On direction reversal the output is frozen until the gear backlash is cleared.
+// On direction reversal, samples a new effective limit from [fwd|rev] ± N(0, variance²).
+// fwd_rad / rev_rad: directional limits (pre-resolved from config; may equal symmetric value).
+// variance_rad: Gaussian std dev for per-reversal randomness (0 = deterministic).
 double apply_backlash_delta(
   double vel_rps,
   double dt_sec,
-  double backlash_limit_rad,
+  double backlash_fwd_rad,
+  double backlash_rev_rad,
+  double variance_rad,
   double & accum_rad,
-  int & last_dir)
+  double & current_limit_rad,
+  int & last_dir,
+  std::mt19937 & rng)
 {
   if (vel_rps == 0.0) {
     return 0.0;
@@ -47,12 +53,19 @@ double apply_backlash_delta(
   const int cur_dir = (vel_rps > 0.0) ? 1 : -1;
 
   if (cur_dir != last_dir) {
-    // 방향 전환: 백래시 누적 초기화
+    // 방향 전환: 방향별 한계 선택 + 분산 샘플링
+    const double base = (cur_dir > 0) ? backlash_fwd_rad : backlash_rev_rad;
+    if (variance_rad > 0.0) {
+      std::normal_distribution<double> dist(base, variance_rad);
+      current_limit_rad = std::max(0.0, dist(rng));
+    } else {
+      current_limit_rad = base;
+    }
     accum_rad = 0.0;
     last_dir = cur_dir;
   }
 
-  if (accum_rad < backlash_limit_rad) {
+  if (accum_rad < current_limit_rad) {
     // 백래시 구간 — 출력 위치 고정, 누적만 증가
     accum_rad += std::abs(vel_rps) * dt_sec;
     return 0.0;
@@ -161,21 +174,40 @@ SimMotorStepResult step_sim_motor_model(
   state.el_step_error_rad += compute_step_loss_delta(
     el_command_accel, state.el_pos_rad, rad_per_pulse, config);
 
-  // Backlash: 방향 전환 시 출력 위치 고정 (데드밴드)
-  const auto az_backlash_limit = deg_to_rad(config.az_backlash_deg);
-  const auto el_backlash_limit = deg_to_rad(config.el_backlash_deg);
+  // Step loss recovery: 정지 구간에서 오차 지수 감소 (recovery_rate=0 → 비활성)
+  if (config.step_loss_recovery_rate > 0.0) {
+    const double decay = std::exp(-config.step_loss_recovery_rate * config.dt_sec);
+    state.az_step_error_rad *= decay;
+    state.el_step_error_rad *= decay;
+  }
+
+  // Backlash: 방향 전환 시 출력 위치 고정 (비대칭 + 분산 지원)
+  // fwd/rev > 0 이면 방향별 한계 사용, 0이면 symmetric backlash_deg 폴백
+  auto resolve_backlash = [](double fwd_deg, double rev_deg, double sym_deg) {
+    return std::make_pair(
+      (fwd_deg > 0.0) ? deg_to_rad(fwd_deg) : deg_to_rad(sym_deg),
+      (rev_deg > 0.0) ? deg_to_rad(rev_deg) : deg_to_rad(sym_deg));
+  };
+  const auto [az_fwd_rad, az_rev_rad] =
+    resolve_backlash(config.az_backlash_fwd_deg, config.az_backlash_rev_deg, config.az_backlash_deg);
+  const auto [el_fwd_rad, el_rev_rad] =
+    resolve_backlash(config.el_backlash_fwd_deg, config.el_backlash_rev_deg, config.el_backlash_deg);
 
   state.az_pos_rad += apply_backlash_delta(
-    state.az_vel_rps, config.dt_sec, az_backlash_limit,
-    state.az_backlash_accum_rad, state.az_last_dir);
+    state.az_vel_rps, config.dt_sec, az_fwd_rad, az_rev_rad,
+    deg_to_rad(config.az_backlash_variance_deg),
+    state.az_backlash_accum_rad, state.az_backlash_current_limit_rad,
+    state.az_last_dir, state.rng);
   state.az_pos_rad = std::fmod(state.az_pos_rad, kTwoPi);
   if (state.az_pos_rad < 0.0) {
     state.az_pos_rad += kTwoPi;
   }
 
   state.el_pos_rad += apply_backlash_delta(
-    state.el_vel_rps, config.dt_sec, el_backlash_limit,
-    state.el_backlash_accum_rad, state.el_last_dir);
+    state.el_vel_rps, config.dt_sec, el_fwd_rad, el_rev_rad,
+    deg_to_rad(config.el_backlash_variance_deg),
+    state.el_backlash_accum_rad, state.el_backlash_current_limit_rad,
+    state.el_last_dir, state.rng);
   state.el_pos_rad = std::clamp(state.el_pos_rad, 0.0, kElevationMaxRadians);
   if ((state.el_pos_rad <= 0.0 && state.el_vel_rps < 0.0) ||
       (state.el_pos_rad >= kElevationMaxRadians && state.el_vel_rps > 0.0))

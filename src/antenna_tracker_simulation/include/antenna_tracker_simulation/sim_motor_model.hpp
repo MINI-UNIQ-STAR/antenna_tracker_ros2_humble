@@ -2,6 +2,7 @@
 #define ANTENNA_TRACKER_SIMULATION__SIM_MOTOR_MODEL_HPP_
 
 #include <cmath>
+#include <random>
 #include <antenna_tracker_msgs/msg/encoder_feedback.hpp>
 #include <antenna_tracker_msgs/msg/motor_command.hpp>
 
@@ -35,13 +36,24 @@ struct SimMotorConfig
   double motor_holding_torque_nm{1.2};
   double gearbox_efficiency{0.85};
 
-  // Backlash (기어 백래시)
+  // Backlash (기어 백래시) — symmetric baseline
   double az_backlash_deg{0.8};   // 20:1 기어박스 출력축 기준
   double el_backlash_deg{0.5};   // elevation은 단방향 중력 하중으로 백래시 작음
+
+  // Backlash — asymmetric overrides (0.0 = use symmetric az/el_backlash_deg)
+  double az_backlash_fwd_deg{0.0};
+  double az_backlash_rev_deg{0.0};
+  double el_backlash_fwd_deg{0.0};
+  double el_backlash_rev_deg{0.0};
+
+  // Backlash — per-reversal Gaussian variance (std dev, degrees; 0.0 = deterministic)
+  double az_backlash_variance_deg{0.0};
+  double el_backlash_variance_deg{0.0};
 
   // Step Loss (스텝 탈조)
   double step_loss_accel_threshold_dps2{2232.0};  // 토크 한계 도달 가속도
   double step_loss_rate{0.002};                    // 초과분 당 탈조 비율
+  double step_loss_recovery_rate{0.0};             // 1/s, 0 = 복원 없음 (AC-5/6 보존)
 };
 
 struct SimMotorState
@@ -55,14 +67,19 @@ struct SimMotorState
   double noise_phase_sec{0.0};
 
   // Backlash tracking
-  double az_backlash_accum_rad{0.0};  // 현재 백래시 누적량 (항상 양수, 방향은 az_last_dir로 구분)
+  double az_backlash_accum_rad{0.0};          // 현재 백래시 누적량
   double el_backlash_accum_rad{0.0};
-  int    az_last_dir{0};              // 마지막 이동 방향: +1, -1, 0(정지)
+  int    az_last_dir{0};                      // 마지막 이동 방향: +1, -1, 0(정지)
   int    el_last_dir{0};
+  double az_backlash_current_limit_rad{0.0};  // 현재 방향 유효 백래시 한계 (재샘플링)
+  double el_backlash_current_limit_rad{0.0};
 
   // Step loss tracking
   double az_step_error_rad{0.0};      // 누적 탈조 오차 (피드백에 반영)
   double el_step_error_rad{0.0};
+
+  // RNG for stochastic effects (deterministic seed for reproducibility)
+  std::mt19937 rng{42};
 };
 
 struct SimMotorStepResult

@@ -3,6 +3,8 @@
 #include <antenna_tracker_msgs/msg/encoder_feedback.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include "antenna_tracker_simulation/sim_motor_model.hpp"
+#include <deque>
+#include <random>
 
 class SimMotorBridge : public rclcpp::Node {
 public:
@@ -26,12 +28,23 @@ public:
         declare_parameter<double>("load_inertia_kgm2", 0.41);
         declare_parameter<double>("motor_holding_torque_nm", 1.2);
         declare_parameter<double>("gearbox_efficiency", 0.85);
-        // Backlash
+        // Backlash (symmetric)
         declare_parameter<double>("az_backlash_deg", 0.8);
         declare_parameter<double>("el_backlash_deg", 0.5);
+        // Backlash (asymmetric overrides; 0.0 = use symmetric)
+        declare_parameter<double>("az_backlash_fwd_deg", 0.0);
+        declare_parameter<double>("az_backlash_rev_deg", 0.0);
+        declare_parameter<double>("el_backlash_fwd_deg", 0.0);
+        declare_parameter<double>("el_backlash_rev_deg", 0.0);
+        // Backlash variance (Gaussian std dev; 0.0 = deterministic)
+        declare_parameter<double>("az_backlash_variance_deg", 0.0);
+        declare_parameter<double>("el_backlash_variance_deg", 0.0);
         // Step loss
         declare_parameter<double>("step_loss_accel_threshold_dps2", 2232.0);
         declare_parameter<double>("step_loss_rate", 0.002);
+        declare_parameter<double>("step_loss_recovery_rate", 0.0);
+        declare_parameter<double>("can_delay_ms", 0.0);
+        declare_parameter<double>("can_drop_rate", 0.0);
 
         config_.stepper_pulses_per_rev = get_parameter("stepper_pulses_per_rev").as_double();
         config_.stepper_microsteps = get_parameter("stepper_microsteps").as_double();
@@ -52,8 +65,17 @@ public:
         config_.gearbox_efficiency = get_parameter("gearbox_efficiency").as_double();
         config_.az_backlash_deg = get_parameter("az_backlash_deg").as_double();
         config_.el_backlash_deg = get_parameter("el_backlash_deg").as_double();
+        config_.az_backlash_fwd_deg = get_parameter("az_backlash_fwd_deg").as_double();
+        config_.az_backlash_rev_deg = get_parameter("az_backlash_rev_deg").as_double();
+        config_.el_backlash_fwd_deg = get_parameter("el_backlash_fwd_deg").as_double();
+        config_.el_backlash_rev_deg = get_parameter("el_backlash_rev_deg").as_double();
+        config_.az_backlash_variance_deg = get_parameter("az_backlash_variance_deg").as_double();
+        config_.el_backlash_variance_deg = get_parameter("el_backlash_variance_deg").as_double();
         config_.step_loss_accel_threshold_dps2 = get_parameter("step_loss_accel_threshold_dps2").as_double();
         config_.step_loss_rate = get_parameter("step_loss_rate").as_double();
+        config_.step_loss_recovery_rate = get_parameter("step_loss_recovery_rate").as_double();
+        can_delay_ms_ = get_parameter("can_delay_ms").as_double();
+        can_drop_rate_ = get_parameter("can_drop_rate").as_double();
 
         sub_cmd_ = this->create_subscription<antenna_tracker_msgs::msg::MotorCommand>(
             "/antenna/motor_cmd", rclcpp::SensorDataQoS(),
@@ -74,16 +96,45 @@ public:
             std::bind(&SimMotorBridge::integrate_and_publish, this));
 
         RCLCPP_INFO(this->get_logger(),
-            "SimMotorBridge ready — NEMA23 twin, 200 steps/rev, gear %.1f:1, noise(cmd=%.2fHz, enc=%.2fdeg)",
-            config_.gear_ratio, config_.command_frequency_noise_hz, config_.encoder_angle_noise_deg);
+            "SimMotorBridge ready — NEMA23 twin, 200 steps/rev, gear %.1f:1, noise(cmd=%.2fHz, enc=%.2fdeg), CAN(delay=%.1fms, drop=%.0f%%)",
+            config_.gear_ratio, config_.command_frequency_noise_hz, config_.encoder_angle_noise_deg,
+            can_delay_ms_, can_drop_rate_ * 100.0);
     }
 
 private:
     void cmd_callback(const antenna_tracker_msgs::msg::MotorCommand::SharedPtr msg) {
-        antenna_tracker_simulation::apply_motor_command(*msg, state_);
+        // Emergency stop always bypasses delay queue — safety critical
+        if (msg->emergency_stop) {
+            antenna_tracker_simulation::apply_motor_command(*msg, state_);
+            return;
+        }
+        // Drop check
+        if (can_drop_rate_ > 0.0 && drop_dist_(rng_) < can_drop_rate_) {
+            return;  // packet dropped
+        }
+        if (can_delay_ms_ <= 0.0) {
+            // No delay: apply immediately
+            antenna_tracker_simulation::apply_motor_command(*msg, state_);
+        } else {
+            // Buffer with delivery time
+            auto delivery_time = this->now() + rclcpp::Duration::from_seconds(can_delay_ms_ / 1000.0);
+            cmd_queue_.push_back({delivery_time, *msg});
+            // Safety: limit queue size to prevent unbounded growth (max 2 seconds of commands)
+            const size_t max_queue = static_cast<size_t>(2.0 * 1000.0 / std::max(can_delay_ms_, 1.0) + 10);
+            while (cmd_queue_.size() > max_queue) {
+                cmd_queue_.pop_front();
+            }
+        }
     }
 
     void integrate_and_publish() {
+        // Deliver delayed commands whose time has come
+        auto now_time = this->now();
+        while (!cmd_queue_.empty() && cmd_queue_.front().first <= now_time) {
+            antenna_tracker_simulation::apply_motor_command(cmd_queue_.front().second, state_);
+            cmd_queue_.pop_front();
+        }
+
         const auto step = antenna_tracker_simulation::step_sim_motor_model(state_, config_);
 
         /* Forward velocity to Gazebo for visualisation */
@@ -110,6 +161,13 @@ private:
     // State
     antenna_tracker_simulation::SimMotorConfig config_;
     antenna_tracker_simulation::SimMotorState state_;
+
+    // CAN delay/drop simulation
+    double can_delay_ms_{0.0};
+    double can_drop_rate_{0.0};
+    std::deque<std::pair<rclcpp::Time, antenna_tracker_msgs::msg::MotorCommand>> cmd_queue_;
+    std::mt19937 rng_{42};  // deterministic seed for reproducibility
+    std::uniform_real_distribution<double> drop_dist_{0.0, 1.0};
 };
 
 int main(int argc, char **argv) {

@@ -133,3 +133,17 @@ jobs:
               source install/setup.bash
               bash /ros2_ws/scripts/test_bringup_smoke.sh hardware
             "
+
+      - name: Noise Sweep Matrix (fast)
+        if: always()
+        run: |
+          python3 scripts/noise_sweep_matrix.py --fast \
+            --output /tmp/noise_sweep_results.csv \
+            --skip-docker
+
+      - name: Upload noise sweep results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: noise-sweep-results
+          path: /tmp/noise_sweep_results.csv

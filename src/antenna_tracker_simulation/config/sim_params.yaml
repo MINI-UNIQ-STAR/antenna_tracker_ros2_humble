@@ -7,6 +7,10 @@
     loop_rate_hz: 100.0
     use_sim_time: true
 
+    # CAN Bus Simulation (0 = ideal bus)
+    can_delay_ms: 0.0            # CAN bus round-trip latency (실측 1~5ms)
+    can_drop_rate: 0.0           # packet drop probability (0.0~1.0)
+
     # Tracker Ground Station Position (하동 금오산 849m)
     default_ground_lat: 35.0650
     default_ground_lon: 127.7600
@@ -60,12 +64,21 @@
     load_inertia_kgm2: 0.41
     motor_holding_torque_nm: 1.2
     gearbox_efficiency: 0.85
-    # Backlash (기어 백래시)
+    # Backlash (기어 백래시) — symmetric baseline
     az_backlash_deg: 0.8
     el_backlash_deg: 0.5
+    # Backlash — asymmetric overrides (0.0 = use symmetric)
+    az_backlash_fwd_deg: 0.0
+    az_backlash_rev_deg: 0.0
+    el_backlash_fwd_deg: 0.0
+    el_backlash_rev_deg: 0.0
+    # Backlash — per-reversal Gaussian variance (std dev, degrees; 0.0 = deterministic)
+    az_backlash_variance_deg: 0.0
+    el_backlash_variance_deg: 0.0
     # Step Loss (스텝 탈조)
     step_loss_accel_threshold_dps2: 2232.0
     step_loss_rate: 0.002
+    step_loss_recovery_rate: 0.0        # 1/s; 0 = no recovery
 
     # Timeouts (relaxed for simulation)
     imu_timeout_sec: 5.0
